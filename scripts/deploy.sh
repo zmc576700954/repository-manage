@@ -97,7 +97,8 @@ if [[ $INIT_MODE -eq 1 ]]; then
     warn "repo already exists at $REPO_DIR; pulling instead"
     cd "$REPO_DIR"
     fix_remote_if_github "$REPO_DIR"
-    git pull gitee main --ff-only || warn "git pull gitee failed (continuing)"
+    # git < 1.7.10 不支持 --ff-only，用 fetch + reset 实现等价语义
+    git fetch gitee main 2>/dev/null && git reset --hard gitee/main || warn "git pull gitee failed (continuing)"
   else
     log "cloning $REPO_URL -> $REPO_DIR"
     mkdir -p "$APP_HOME"
@@ -134,7 +135,8 @@ else
   log "updating repo: $REPO_DIR"
   cd "$REPO_DIR"
   fix_remote_if_github "$REPO_DIR"
-  git pull gitee main --ff-only || warn "git pull gitee failed (continuing)"
+  # git < 1.7.10 不支持 --ff-only，用 fetch + reset 实现等价语义
+  git fetch gitee main 2>/dev/null && git reset --hard gitee/main || warn "git pull gitee failed (continuing)"
 fi
 
 # ---------- Rust 工具链 ----------
