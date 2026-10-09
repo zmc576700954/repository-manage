@@ -62,15 +62,26 @@ fail() { echo "${RED}[$(date +%H:%M:%S)] FAIL${RESET} $*" >&2; exit 1; }
 [[ $(id -u) -eq 0 ]] || fail "must run as root (use sudo)"
 
 # ---------- 仓库准备 ----------
-# 智能处理 origin：如果当前 origin 是 GitHub，提示并询问是否改为 Gitee
+# 智能处理 gitee remote：兼容旧的 origin 命名
 fix_remote_if_github() {
   local dir="$1"
+  # 检查 origin（兼容命名）
   local current=$(git -C "$dir" remote get-url origin 2>/dev/null || echo "")
+  local gitee_url=$(git -C "$dir" remote get-url gitee 2>/dev/null || echo "")
+  local github_url=$(git -C "$dir" remote get-url github 2>/dev/null || echo "")
+
+  # 把任何指向 GitHub 的 remote 改名为 github
   if [[ "$current" == *"github.com"* ]]; then
-    warn "current origin is GitHub: $current"
-    warn "GitHub is slow in China; switching origin to Gitee"
-    git -C "$dir" remote set-url origin "https://gitee.com/zhu_ming_chen/repository-manage.git"
-    log "origin switched to: $(git -C "$dir" remote get-url origin)"
+    if [[ "$github_url" == "" ]]; then
+      git -C "$dir" remote rename origin github
+      log "renamed remote 'origin' -> 'github'"
+    fi
+  fi
+
+  # 确保有 gitee remote
+  if ! git -C "$dir" remote get-url gitee >/dev/null 2>&1; then
+    git -C "$dir" remote add gitee "https://gitee.com/zhu_ming_chen/repository-manage.git"
+    log "added remote 'gitee'"
   fi
 }
 
@@ -82,7 +93,7 @@ if [[ $INIT_MODE -eq 1 ]]; then
     warn "repo already exists at $REPO_DIR; pulling instead"
     cd "$REPO_DIR"
     fix_remote_if_github "$REPO_DIR"
-    git pull --ff-only
+    git pull gitee main --ff-only || warn "git pull gitee failed (continuing)"
   else
     log "cloning $REPO_URL -> $REPO_DIR"
     mkdir -p "$APP_HOME"
@@ -94,7 +105,8 @@ if [[ $INIT_MODE -eq 1 ]]; then
         if git clone --depth 1 "$MIRROR_URL" "$REPO_DIR" 2>/dev/null; then
           log "cloned via ghproxy"
           cd "$REPO_DIR"
-          git remote set-url origin "$REPO_URL"
+          git remote rename origin github
+          git remote add gitee "https://gitee.com/zhu_ming_chen/repository-manage.git"
         else
           warn "ghproxy failed, trying original URL"
           git clone --depth 1 "$REPO_URL" "$REPO_DIR"
@@ -104,6 +116,7 @@ if [[ $INIT_MODE -eq 1 ]]; then
         git clone --depth 1 "$REPO_URL" "$REPO_DIR"
         ;;
     esac
+    cd "$REPO_DIR"
     fix_remote_if_github "$REPO_DIR"
   fi
 elif [[ "${SYNAPSE_REPO:-}" != "" && -d "${SYNAPSE_REPO}" ]]; then
@@ -117,7 +130,7 @@ else
   log "updating repo: $REPO_DIR"
   cd "$REPO_DIR"
   fix_remote_if_github "$REPO_DIR"
-  git pull --ff-only || warn "git pull failed (continuing with current HEAD)"
+  git pull gitee main --ff-only || warn "git pull gitee failed (continuing)"
 fi
 
 # ---------- Rust 工具链 ----------
@@ -194,16 +207,24 @@ CARGO_EOF
   fi
 
   # 最后 fallback：apt 安装系统包
+  # 注意：Debian 12 自带 rustc 1.63，低于本项目要求的 1.66；Ubutnu 22.04 是 1.75
   log "trying apt-get install rustc cargo..."
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update -qq && apt-get install -y --no-install-recommends rustc cargo
     if command -v cargo >/dev/null 2>&1; then
-      log "${GREEN}✓ rust installed via apt${RESET}: $(rustc --version)"
-      return
+      local rust_ver=$(rustc --version | grep -oE '[0-9]+\.[0-9]+' | head -1)
+      log "apt installed rustc ${rust_ver}"
+      # 检查是否满足最低 1.66
+      if awk -v v="$rust_ver" 'BEGIN{exit !(v >= 1.66)}'; then
+        log "${GREEN}✓ rust installed via apt${RESET}: $(rustc --version)"
+        return
+      else
+        warn "apt rustc ${rust_ver} is too old (< 1.66). Need rustup install."
+      fi
     fi
   fi
 
-  fail "could not install Rust toolchain via any method. Install manually first."
+  fail "could not install Rust toolchain via any method. Install rustup manually: https://rustup.rs/"
 }
 
 ensure_rust
