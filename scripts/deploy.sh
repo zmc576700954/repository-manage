@@ -78,6 +78,23 @@ fi
 # ---------- 预检 ----------
 [[ $(id -u) -eq 0 ]] || fail "must run as root (use sudo)"
 
+# 基础工具检查（Alibaba Cloud Linux 3 / Ubuntu 最小安装可能没装）
+for cmd in curl tar git; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    warn "$cmd not found, attempting to install..."
+    if command -v dnf >/dev/null 2>&1; then
+      dnf install -y "$cmd" || fail "failed to install $cmd via dnf"
+    elif command -v yum >/dev/null 2>&1; then
+      yum install -y "$cmd" || fail "failed to install $cmd via yum"
+    elif command -v apt-get >/dev/null 2>&1; then
+      apt-get install -y "$cmd" || fail "failed to install $cmd via apt"
+    else
+      fail "$cmd not found and no package manager available"
+    fi
+  fi
+done
+log "basic tools OK: $(curl --version | head -1), $(tar --version | head -1), $(git --version)"
+
 # ---------- 仓库准备 ----------
 # 智能处理 gitee remote：兼容旧的 origin 命名
 # 注意：避免 git -C（Git < 1.8 不支持），改用 subshell + cd
