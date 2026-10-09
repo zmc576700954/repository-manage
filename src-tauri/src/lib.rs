@@ -1,6 +1,7 @@
 pub mod entry;
 pub mod index;
 pub mod layout_store;
+pub mod local_server;
 pub mod parser;
 pub mod paths;
 pub mod scanner;

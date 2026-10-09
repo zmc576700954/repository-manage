@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::Mutex;
 
 use crate::entry::RawEntry;
 use crate::paths::index_db_path;
@@ -74,7 +75,7 @@ pub struct StoredRelation {
 }
 
 pub struct Index {
-    conn: Connection,
+    conn: Mutex<Connection>,
 }
 
 impl Index {
@@ -84,7 +85,9 @@ impl Index {
         }
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     pub fn open_default() -> rusqlite::Result<Self> {
@@ -92,22 +95,23 @@ impl Index {
     }
 
     pub fn upsert_entry(&self, entry: &RawEntry) -> rusqlite::Result<()> {
-        self.conn.execute(
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
             "INSERT OR REPLACE INTO entries (id, title, path, group_name, has_content_md) VALUES (?, ?, ?, ?, ?)",
             params![entry.id, entry.title, entry.path.to_string_lossy(), entry.group, entry.has_content_md as i32],
         )?;
 
-        self.conn.execute("DELETE FROM tags WHERE entry_id = ?", params![entry.id])?;
+        conn.execute("DELETE FROM tags WHERE entry_id = ?", params![entry.id])?;
         for tag in &entry.tags {
-            self.conn.execute(
+            conn.execute(
                 "INSERT INTO tags (entry_id, tag) VALUES (?, ?)",
                 params![entry.id, tag],
             )?;
         }
 
-        self.conn.execute("DELETE FROM attachments WHERE entry_id = ?", params![entry.id])?;
+        conn.execute("DELETE FROM attachments WHERE entry_id = ?", params![entry.id])?;
         for att in &entry.attachments {
-            self.conn.execute(
+            conn.execute(
                 "INSERT INTO attachments (entry_id, path, caption, attachment_type) VALUES (?, ?, ?, ?)",
                 params![entry.id, att.path, att.caption, att.attachment_type],
             )?;
@@ -117,7 +121,8 @@ impl Index {
     }
 
     pub fn delete_entry(&self, id: &str) -> rusqlite::Result<()> {
-        self.conn.execute("DELETE FROM entries WHERE id = ?", params![id])?;
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM entries WHERE id = ?", params![id])?;
         Ok(())
     }
 
@@ -128,7 +133,8 @@ impl Index {
         relation_type: &str,
         note: Option<&str>,
     ) -> rusqlite::Result<()> {
-        self.conn.execute(
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
             "INSERT OR IGNORE INTO relations (from_id, to_id, relation_type, note) VALUES (?, ?, ?, ?)",
             params![from_id, to_id, relation_type, note],
         )?;
@@ -141,7 +147,8 @@ impl Index {
         to_id: &str,
         relation_type: &str,
     ) -> rusqlite::Result<()> {
-        self.conn.execute(
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
             "DELETE FROM relations WHERE from_id = ? AND to_id = ? AND relation_type = ?",
             params![from_id, to_id, relation_type],
         )?;
@@ -149,7 +156,8 @@ impl Index {
     }
 
     pub fn get_all_entries(&self) -> rusqlite::Result<Vec<StoredEntry>> {
-        let mut stmt = self.conn.prepare(
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
             "SELECT id, title, path, group_name, has_content_md FROM entries ORDER BY id",
         )?;
 
@@ -169,22 +177,22 @@ impl Index {
         let mut entries: Vec<StoredEntry> = entries_iter.collect::<rusqlite::Result<Vec<_>>>()?;
 
         for entry in &mut entries {
-            entry.tags = self.get_tags(&entry.id)?;
-            entry.attachments = self.get_attachments(&entry.id)?;
-            entry.relations = self.get_relations(&entry.id)?;
+            entry.tags = Self::get_tags(&conn, &entry.id)?;
+            entry.attachments = Self::get_attachments(&conn, &entry.id)?;
+            entry.relations = Self::get_relations(&conn, &entry.id)?;
         }
 
         Ok(entries)
     }
 
-    fn get_tags(&self, entry_id: &str) -> rusqlite::Result<Vec<String>> {
-        let mut stmt = self.conn.prepare("SELECT tag FROM tags WHERE entry_id = ?")?;
+    fn get_tags(conn: &Connection, entry_id: &str) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = conn.prepare("SELECT tag FROM tags WHERE entry_id = ?")?;
         let rows = stmt.query_map(params![entry_id], |row| row.get::<_, String>(0))?;
         rows.collect()
     }
 
-    fn get_attachments(&self, entry_id: &str) -> rusqlite::Result<Vec<StoredAttachment>> {
-        let mut stmt = self.conn.prepare(
+    fn get_attachments(conn: &Connection, entry_id: &str) -> rusqlite::Result<Vec<StoredAttachment>> {
+        let mut stmt = conn.prepare(
             "SELECT path, caption, attachment_type FROM attachments WHERE entry_id = ?",
         )?;
         let rows = stmt.query_map(params![entry_id], |row| {
@@ -197,8 +205,8 @@ impl Index {
         rows.collect()
     }
 
-    fn get_relations(&self, entry_id: &str) -> rusqlite::Result<Vec<StoredRelation>> {
-        let mut stmt = self.conn.prepare(
+    fn get_relations(conn: &Connection, entry_id: &str) -> rusqlite::Result<Vec<StoredRelation>> {
+        let mut stmt = conn.prepare(
             "SELECT from_id, to_id, relation_type, note FROM relations WHERE from_id = ? OR to_id = ?",
         )?;
         let rows = stmt.query_map(params![entry_id, entry_id], |row| {
@@ -214,8 +222,12 @@ impl Index {
 
     /// 全量重建索引（从 kb 根目录扫描）。
     pub fn rebuild(&self, kb_root: &Path) -> rusqlite::Result<usize> {
-        self.conn.execute("DELETE FROM entries", [])?;
-        self.conn.execute("DELETE FROM relations", [])?;
+        // 先清空表（短暂持锁）
+        {
+            let conn = self.conn.lock().unwrap();
+            conn.execute("DELETE FROM entries", [])?;
+            conn.execute("DELETE FROM relations", [])?;
+        }
 
         let mut count = 0;
         for entry_dir in find_entry_dirs(kb_root) {
