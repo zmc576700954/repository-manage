@@ -274,13 +274,48 @@ CARGO_EOF
 
 ensure_rust
 
-# ---------- npm ----------
-if ! command -v npm >/dev/null 2>&1; then
-  fail "npm not found. Install Node.js first."
-fi
+# ---------- Node.js / npm ----------
+# NodeSource 国内镜像：https://npmmirror.com/mirrors/node/
+ensure_node() {
+  if command -v npm >/dev/null 2>&1; then
+    log "npm found: $(npm --version)"
+    return
+  fi
+  warn "npm not found, installing Node.js 20.x..."
 
-# 确保 cargo 在 PATH（即使前面 source 过）
-export PATH="/root/.cargo/bin:$PATH"
+  # 先尝试 apt（最简单）
+  if command -v apt-get >/dev/null 2>&1; then
+    log "trying apt-get install nodejs npm..."
+    if apt-get install -y --no-install-recommends nodejs npm 2>/dev/null && command -v npm >/dev/null 2>&1; then
+      log "✓ nodejs installed via apt: $(node --version), npm $(npm --version)"
+      return
+    fi
+    warn "apt install failed, trying NodeSource mirror"
+  fi
+
+  # fallback：NodeSource 镜像
+  log "downloading NodeSource setup from npmmirror.com..."
+  if curl --proto '=https' --tlsv1.2 -sSf \
+        --connect-timeout 10 --max-time 60 \
+        "https://npmmirror.com/mirrors/node/v20.18.0/node-v20.18.0-linux-x64.tar.xz" \
+        -o /tmp/node.tar.xz; then
+    mkdir -p /opt/node
+    tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1
+    export PATH="/opt/node/bin:$PATH"
+    ln -sf /opt/node/bin/node /usr/local/bin/node
+    ln -sf /opt/node/bin/npm /usr/local/bin/npm
+    ln -sf /opt/node/bin/npx /usr/local/bin/npx
+    log "✓ node installed from npmmirror: $(node --version), npm $(npm --version)"
+    return
+  fi
+
+  fail "could not install Node.js. Install manually first."
+}
+
+ensure_node
+
+# 确保 cargo 和 node 在 PATH（即使前面 source 过）
+export PATH="/root/.cargo/bin:/opt/node/bin:$PATH"
 
 # ---------- 构建 ----------
 cd "$REPO_DIR"
