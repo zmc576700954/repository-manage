@@ -120,12 +120,6 @@ impl Index {
         Ok(())
     }
 
-    pub fn delete_entry(&self, id: &str) -> rusqlite::Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM entries WHERE id = ?", params![id])?;
-        Ok(())
-    }
-
     pub fn add_relation(
         &self,
         from_id: &str,

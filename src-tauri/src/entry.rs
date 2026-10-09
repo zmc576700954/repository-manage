@@ -13,9 +13,11 @@ pub struct RawEntry {
     pub tags: Vec<String>,
     pub group: Option<String>,
     pub path: PathBuf,
+    #[allow(dead_code)]
     pub content_path: PathBuf,
     pub attachments: Vec<RawAttachment>,
     pub linked_targets: Vec<String>,
+    #[allow(dead_code)]
     pub yaml: Option<YamlFields>,
     pub has_content_md: bool,
 }
