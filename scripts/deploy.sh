@@ -63,26 +63,30 @@ fail() { echo "${RED}[$(date +%H:%M:%S)] FAIL${RESET} $*" >&2; exit 1; }
 
 # ---------- 仓库准备 ----------
 # 智能处理 gitee remote：兼容旧的 origin 命名
+# 注意：避免 git -C（Git < 1.8 不支持），改用 subshell + cd
 fix_remote_if_github() {
   local dir="$1"
-  # 检查 origin（兼容命名）
-  local current=$(git -C "$dir" remote get-url origin 2>/dev/null || echo "")
-  local gitee_url=$(git -C "$dir" remote get-url gitee 2>/dev/null || echo "")
-  local github_url=$(git -C "$dir" remote get-url github 2>/dev/null || echo "")
+  (
+    cd "$dir"
+    # 检查 origin（兼容命名）
+    local current=$(git remote get-url origin 2>/dev/null || echo "")
+    local gitee_url=$(git remote get-url gitee 2>/dev/null || echo "")
+    local github_url=$(git remote get-url github 2>/dev/null || echo "")
 
-  # 把任何指向 GitHub 的 remote 改名为 github
-  if [[ "$current" == *"github.com"* ]]; then
-    if [[ "$github_url" == "" ]]; then
-      git -C "$dir" remote rename origin github
-      log "renamed remote 'origin' -> 'github'"
+    # 把任何指向 GitHub 的 remote 改名为 github
+    if [[ "$current" == *"github.com"* ]]; then
+      if [[ "$github_url" == "" ]]; then
+        git remote rename origin github
+        log "renamed remote 'origin' -> 'github'"
+      fi
     fi
-  fi
 
-  # 确保有 gitee remote
-  if ! git -C "$dir" remote get-url gitee >/dev/null 2>&1; then
-    git -C "$dir" remote add gitee "https://gitee.com/zhu_ming_chen/repository-manage.git"
-    log "added remote 'gitee'"
-  fi
+    # 确保有 gitee remote
+    if ! git remote get-url gitee >/dev/null 2>&1; then
+      git remote add gitee "https://gitee.com/zhu_ming_chen/repository-manage.git"
+      log "added remote 'gitee'"
+    fi
+  )
 }
 
 if [[ $INIT_MODE -eq 1 ]]; then
