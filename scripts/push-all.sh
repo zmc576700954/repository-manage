@@ -1,22 +1,35 @@
 #!/usr/bin/env bash
-# 同时推送到 Gitee（origin）和 GitHub（github）。
+# 同时推送到 Gitee（gitee）和 GitHub（github）。
 # Gitee 是国内主仓，GitHub 作为镜像备份。
 #
 # 用法：
 #   ./scripts/push-all.sh                  # 推送当前分支
 #   ./scripts/push-all.sh feature-x        # 推送指定分支
 #   ./scripts/push-all.sh --tags           # 推送 tags
+#   ./scripts/push-all.sh --help           # 显示帮助
 
 set -euo pipefail
 
 BRANCH="${1:-$(git symbolic-ref --short HEAD 2>/dev/null || echo main)}"
 PUSH_TAGS=0
+SHOW_HELP=0
+
+# 第一个参数如果是 -h/--help 显示帮助
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  SHOW_HELP=1
+fi
 
 for arg in "$@"; do
   case "$arg" in
     --tags) PUSH_TAGS=1 ;;
+    -h|--help) SHOW_HELP=1 ;;
   esac
 done
+
+if [[ $SHOW_HELP -eq 1 ]]; then
+  grep '^#' "$0" | sed 's/^# \?//'
+  exit 0
+fi
 
 # 颜色
 if [[ -t 1 ]]; then
