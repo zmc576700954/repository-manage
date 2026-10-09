@@ -168,14 +168,24 @@ RUST_MIRRORS=(
   "https://mirrors.tuna.tsinghua.edu.cn/rustup"
 )
 # 固定 rustc 版本（避免 stable 滚动导致元数据不一致）
-RUST_VERSION="${RUST_VERSION:-1.83.0}"
+# 注意：rsproxy 镜像对各版本同步速度不同，按可用性从新到旧排序
+# 脚本会按顺序尝试，第一个能下载成功的就用
+RUST_VERSIONS=(
+  "1.85.0"
+  "1.84.0"
+  "1.83.0"
+  "1.82.0"
+  "1.81.0"
+  "1.80.0"
+)
+RUST_VERSION="${RUST_VERSION:-}"  # 空表示自动尝试
 
 ensure_rust() {
   if command -v cargo >/dev/null 2>&1; then
     log "cargo found: $(cargo --version)"
     return
   fi
-  warn "cargo not found, installing Rust toolchain ${RUST_VERSION}..."
+  warn "cargo not found, installing Rust toolchain..."
 
   # 写 cargo 配置（crates 镜像）
   mkdir -p /root/.cargo
@@ -213,18 +223,29 @@ CARGO_EOF
     export RUSTUP_DIST_SERVER="${RUST_MIRRORS[0]}"
     export RUSTUP_UPDATE_ROOT="${RUST_MIRRORS[0]}"
 
-    log "running rustup-init (version ${RUST_VERSION}, this may take 3-5 minutes)..."
-    if bash /tmp/rustup-init.sh -y \
-          --default-toolchain "${RUST_VERSION}" \
-          --profile minimal \
-          --no-modify-path 2>&1 | tail -20; then
-      source /root/.cargo/env
-      if command -v cargo >/dev/null 2>&1; then
-        log "${GREEN}✓ rust installed${RESET}: $(rustc --version)"
-        return
-      fi
+    # 尝试多个 rustc 版本（rsproxy 对不同版本同步速度不同）
+    local versions_to_try=()
+    if [[ -n "$RUST_VERSION" ]]; then
+      versions_to_try=("$RUST_VERSION")
+    else
+      versions_to_try=("${RUST_VERSIONS[@]}")
     fi
-    warn "rustup-init failed; falling back to apt"
+
+    for ver in "${versions_to_try[@]}"; do
+      log "trying rustc version $ver (3-5 minutes)..."
+      if bash /tmp/rustup-init.sh -y \
+            --default-toolchain "$ver" \
+            --profile minimal \
+            --no-modify-path 2>&1 | tail -10; then
+        source /root/.cargo/env
+        if command -v cargo >/dev/null 2>&1; then
+          log "${GREEN}✓ rust installed${RESET}: $(rustc --version)"
+          return
+        fi
+      fi
+      warn "version $ver not available on mirror; trying next..."
+    done
+    warn "all versions failed via rustup; falling back to apt"
   else
     warn "all rustup mirrors unreachable; falling back to apt"
   fi
