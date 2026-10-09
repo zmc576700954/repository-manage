@@ -277,6 +277,33 @@ ensure_rust
 # ---------- Node.js / npm ----------
 # NodeSource 国内镜像：https://npmmirror.com/mirrors/node/
 ensure_node() {
+  # 宝塔可能装多个版本：扫描 /www/server/nodejs/ 下所有版本目录
+  if [[ -d "/www/server/nodejs" ]]; then
+    # 优先取 current 软链
+    if [[ -x "/www/server/nodejs/current/bin/npm" ]]; then
+      local bt_path="/www/server/nodejs/current"
+      log "found 宝塔 node (current) at $bt_path"
+      export PATH="$bt_path/bin:$PATH"
+      ln -sf "$bt_path/bin/node" /usr/local/bin/node 2>/dev/null
+      ln -sf "$bt_path/bin/npm" /usr/local/bin/npm 2>/dev/null
+      ln -sf "$bt_path/bin/npx" /usr/local/bin/npx 2>/dev/null
+      log "✓ using 宝塔 node: $(node --version 2>&1 | head -1), npm $(npm --version 2>&1 | head -1)"
+      return
+    fi
+    # 否则按版本号从高到低尝试
+    for ver_dir in $(ls -1d /www/server/nodejs/v* 2>/dev/null | sort -rV); do
+      if [[ -x "$ver_dir/bin/npm" ]]; then
+        log "found 宝塔 node at $ver_dir"
+        export PATH="$ver_dir/bin:$PATH"
+        ln -sf "$ver_dir/bin/node" /usr/local/bin/node 2>/dev/null
+        ln -sf "$ver_dir/bin/npm" /usr/local/bin/npm 2>/dev/null
+        ln -sf "$ver_dir/bin/npx" /usr/local/bin/npx 2>/dev/null
+        log "✓ using 宝塔 node: $(node --version 2>&1 | head -1), npm $(npm --version 2>&1 | head -1)"
+        return
+      fi
+    done
+  fi
+
   if command -v npm >/dev/null 2>&1; then
     log "npm found: $(npm --version 2>/dev/null || echo 'unknown')"
     return
@@ -323,7 +350,19 @@ ensure_node() {
 ensure_node
 
 # 确保 cargo 和 node 在 PATH（即使前面 source 过）
-export PATH="/root/.cargo/bin:/opt/node/bin:$PATH"
+# 宝塔 node 路径优先（扫描所有版本，取最新的）
+NODE_BIN=""
+if [[ -d "/www/server/nodejs" ]]; then
+  for ver_dir in $(ls -1d /www/server/nodejs/v* 2>/dev/null | sort -rV); do
+    if [[ -x "$ver_dir/bin/npm" ]]; then
+      NODE_BIN="$ver_dir/bin"
+      break
+    fi
+  done
+  [[ -x "/www/server/nodejs/current/bin/npm" ]] && NODE_BIN="/www/server/nodejs/current/bin"
+fi
+[[ -x /opt/node/bin/npm ]] && NODE_BIN="/opt/node/bin"
+export PATH="/root/.cargo/bin:${NODE_BIN}:$PATH"
 
 # ---------- 构建 ----------
 cd "$REPO_DIR"
