@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import { MapView } from '@/views/MapView';
 import { DetailPanel } from '@/views/DetailPanel';
+import { Settings } from '@/views/Settings';
 import { useAppStore } from '@/store/useAppStore';
 
 export default function App() {
@@ -9,6 +10,8 @@ export default function App() {
   const error = useAppStore((s) => s.error);
   const isLoading = useAppStore((s) => s.isLoading);
   const selectedEntryId = useAppStore((s) => s.selectedEntryId);
+
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     loadEntries();
@@ -18,6 +21,12 @@ export default function App() {
     <div className="flex h-screen w-screen bg-gray-50 text-gray-900">
       <Sidebar />
       <main className="relative flex-1">
+        <button
+          onClick={() => setSettingsOpen(true)}
+          className="absolute right-4 top-4 z-10 rounded-md bg-white px-3 py-1.5 text-sm shadow-sm hover:bg-gray-50"
+        >
+          ⚙ Settings
+        </button>
         {error && (
           <div className="absolute left-4 right-4 top-4 z-10 rounded-md bg-red-50 p-3 text-sm text-red-700 shadow-sm">
             {error}
@@ -32,6 +41,7 @@ export default function App() {
         )}
       </main>
       {selectedEntryId && <DetailPanel />}
+      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }
