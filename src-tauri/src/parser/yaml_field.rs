@@ -15,18 +15,38 @@ pub struct YamlFields {
 
 /// 从 Markdown 文件开头提取 --- 包裹的 YAML 块，返回解析结果。
 /// 没有 YAML 块时返回 None。
+/// 跳过开头的非 --- 行（如 HTML 注释），找到第一个 --- 作为起始。
 pub fn extract_yaml_frontmatter(content: &str) -> Option<&str> {
     let lines: Vec<&str> = content.lines().collect();
-    if lines.is_empty() || lines[0].trim() != "---" {
+    if lines.is_empty() {
         return None;
     }
 
-    let end_idx = lines[1..]
+    // 找到第一个 --- 的位置
+    let start_idx = lines.iter().position(|l| l.trim() == "---")?;
+
+    // 从 start_idx+1 开始找结束 ---
+    let end_idx = lines[start_idx + 1..]
         .iter()
         .position(|l| l.trim() == "---")
-        .map(|i| i + 1)?;
+        .map(|i| i + start_idx + 1)?;
 
-    Some(&content[..lines[..=end_idx].join("\n").len()])
+    // 计算 start_idx 对应的字节偏移：前 start_idx 行的总字节数 + 间隔的换行符
+    let mut byte_start = 0;
+    for line in &lines[..start_idx] {
+        byte_start += line.len() + 1; // +1 for \n
+    }
+
+    // 计算到 end_idx 行末尾的字节偏移（含行间换行符）
+    let mut byte_end = byte_start;
+    for i in start_idx..=end_idx {
+        byte_end += lines[i].len();
+        if i < end_idx {
+            byte_end += 1; // 行间换行符
+        }
+    }
+
+    Some(&content[byte_start..byte_end])
 }
 
 /// 解析 YAML 字符串为 YamlFields
