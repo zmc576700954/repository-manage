@@ -294,13 +294,14 @@ ensure_node() {
   fi
 
   # fallback：NodeSource 镜像
-  log "downloading NodeSource setup from npmmirror.com..."
+  log "downloading Node.js 20.18.0 from npmmirror.com..."
+  # 用 .tar.gz 而不是 .tar.xz（避免需要 xz 工具）
   if curl --proto '=https' --tlsv1.2 -sSf \
-        --connect-timeout 10 --max-time 60 \
-        "https://npmmirror.com/mirrors/node/v20.18.0/node-v20.18.0-linux-x64.tar.xz" \
-        -o /tmp/node.tar.xz; then
+        --connect-timeout 10 --max-time 120 \
+        "https://npmmirror.com/mirrors/node/v20.18.0/node-v20.18.0-linux-x64.tar.gz" \
+        -o /tmp/node.tar.gz; then
     mkdir -p /opt/node
-    tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1
+    tar -xzf /tmp/node.tar.gz -C /opt/node --strip-components=1
     export PATH="/opt/node/bin:$PATH"
     ln -sf /opt/node/bin/node /usr/local/bin/node
     ln -sf /opt/node/bin/npm /usr/local/bin/npm
