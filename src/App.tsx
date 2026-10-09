@@ -1,10 +1,29 @@
+import { useEffect } from 'react';
+import { Sidebar } from '@/components/Sidebar';
+import { useAppStore } from '@/store/useAppStore';
+
 export default function App() {
+  const loadEntries = useAppStore((s) => s.loadEntries);
+  const error = useAppStore((s) => s.error);
+  const isLoading = useAppStore((s) => s.isLoading);
+
+  useEffect(() => {
+    loadEntries();
+  }, [loadEntries]);
+
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 text-gray-900">
-      <div className="text-center">
-        <h1 className="text-3xl font-semibold tracking-tight">Synapse KB</h1>
-        <p className="mt-2 text-sm text-gray-500">Personal Knowledge Graph</p>
-      </div>
+    <div className="flex h-screen w-screen bg-gray-50 text-gray-900">
+      <Sidebar />
+      <main className="flex-1">
+        {error && (
+          <div className="m-4 rounded-md bg-red-50 p-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+        {isLoading && (
+          <div className="m-4 text-sm text-gray-500">Loading...</div>
+        )}
+      </main>
     </div>
   );
 }
