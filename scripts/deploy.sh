@@ -296,10 +296,15 @@ ensure_node() {
   # fallback：NodeSource 镜像
   log "downloading Node.js 20.18.0 from npmmirror.com..."
   # 用 .tar.gz 而不是 .tar.xz（避免需要 xz 工具）
-  if curl --proto '=https' --tlsv1.2 -sSf \
-        --connect-timeout 10 --max-time 120 \
+  # -L 强制跟随重定向（npmmirror 会 302 到 cdn.npmmirror.com）
+  if curl -L --proto '=https' --tlsv1.2 -sSf \
+        --connect-timeout 10 --max-time 300 \
         "https://npmmirror.com/mirrors/node/v20.18.0/node-v20.18.0-linux-x64.tar.gz" \
         -o /tmp/node.tar.gz; then
+    # 验证下载的是真 gzip（防止 HTML 错误页）
+    if ! file /tmp/node.tar.gz | grep -q "gzip"; then
+      fail "downloaded file is not gzip. First 100 bytes: $(head -c 100 /tmp/node.tar.gz)"
+    fi
     mkdir -p /opt/node
     tar -xzf /tmp/node.tar.gz -C /opt/node --strip-components=1
     export PATH="/opt/node/bin:$PATH"
