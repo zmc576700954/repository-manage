@@ -226,9 +226,13 @@ macOS/Win/Linux 原生应用，启动后内置 axum HTTP 服务
 
 ```
 同一套前端代码 → vite build → 静态文件
-本地服务由用户在桌面运行 Tauri 提供
-或：用户自行运行 synapse-server（Rust 写的轻量 CLI）
+
+Web 端访问本地文件的方式：
+- 首选：用户在桌面启动 Tauri 应用，内置 axum 服务，Web 通过 CORS 调用
+- 降级（计划中）：独立 synapse-server CLI（Rust 二进制），提供相同 REST API
 ```
+
+> 当前 MVP 阶段仅实现首选方式，synapse-server CLI 在后续版本提供。
 
 ### 7.3 Web 端数据访问
 
