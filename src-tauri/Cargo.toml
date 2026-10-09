@@ -20,11 +20,13 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 notify = "6"
 notify-debouncer-mini = "0.4"
 axum = "0.7"
+tower = "0.5"
+tower-http = { version = "0.5", features = ["fs", "trace"] }
 walkdir = "2"
 anyhow = "1"
 thiserror = "1"
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dirs = "5"
 
 [features]

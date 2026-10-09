@@ -1,13 +1,13 @@
-mod commands;
-mod entry;
-mod error;
-mod index;
-mod layout_store;
-mod local_server;
-mod parser;
-mod paths;
-mod scanner;
-mod state;
+pub mod commands;
+pub mod entry;
+pub mod error;
+pub mod index;
+pub mod layout_store;
+pub mod local_server;
+pub mod parser;
+pub mod paths;
+pub mod scanner;
+pub mod state;
 
 use std::path::PathBuf;
 use std::sync::Arc;
