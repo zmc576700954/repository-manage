@@ -1,6 +1,8 @@
 pub mod entry;
+pub mod index;
 pub mod layout_store;
 pub mod parser;
+pub mod paths;
 pub mod scanner;
 
 // 占位 - 后续任务会填充真实实现
