@@ -8,6 +8,10 @@
 #   SYNAPSE_REPO=/path/to/local ./deploy.sh   # 使用本地代码而非 git pull
 #   RUST_VERSION=1.84.0 ./deploy.sh      # 指定 rustc 版本（默认 1.83.0）
 #
+# 宝塔兼容：
+#   自动检测 /www/wwwroot/*/repository-manage 目录
+#   也可以通过 SYNAPSE_REPO 环境变量显式指定
+#
 # 环境变量（可选，会写入 systemd service 文件）：
 #   SYNAPSE_KB_ROOT    - 知识库根目录（默认 /var/lib/synapse-kb/kb）
 #   SYNAPSE_INDEX_DB   - 索引数据库路径
@@ -57,6 +61,19 @@ fi
 log()  { echo "${GREEN}[$(date +%H:%M:%S)]${RESET} $*"; }
 warn() { echo "${YELLOW}[$(date +%H:%M:%S)] WARN${RESET} $*" >&2; }
 fail() { echo "${RED}[$(date +%H:%M:%S)] FAIL${RESET} $*" >&2; exit 1; }
+
+# 宝塔兼容：自动检测 /www/wwwroot 下的项目目录
+# 优先级：SYNAPSE_REPO 环境变量 > 宝塔自动检测 > APP_HOME/repo（默认）
+# 匹配规则：路径下存在 deploy.sh 或 .git
+if [[ -z "${SYNAPSE_REPO:-}" && -d "/www/wwwroot" ]]; then
+  for site_dir in /www/wwwroot/*/repository-manage; do
+    if [[ -d "$site_dir/.git" || -f "$site_dir/scripts/deploy.sh" ]]; then
+      export SYNAPSE_REPO="$site_dir"
+      log "auto-detected 宝塔 repo at: $SYNAPSE_REPO"
+      break
+    fi
+  done
+fi
 
 # ---------- 预检 ----------
 [[ $(id -u) -eq 0 ]] || fail "must run as root (use sudo)"
