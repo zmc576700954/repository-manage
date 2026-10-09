@@ -278,10 +278,10 @@ ensure_rust
 # NodeSource 国内镜像：https://npmmirror.com/mirrors/node/
 ensure_node() {
   if command -v npm >/dev/null 2>&1; then
-    log "npm found: $(npm --version)"
+    log "npm found: $(npm --version 2>/dev/null || echo 'unknown')"
     return
   fi
-  warn "npm not found, installing Node.js 20.x..."
+  warn "npm not found, installing Node.js 16.x..."
 
   # 先尝试 apt（最简单）
   if command -v apt-get >/dev/null 2>&1; then
@@ -294,12 +294,14 @@ ensure_node() {
   fi
 
   # fallback：NodeSource 镜像
-  log "downloading Node.js 20.18.0 from npmmirror.com..."
+  log "downloading Node.js 16.20.2 from npmmirror.com (compatible with glibc 2.17)..."
   # 用 .tar.gz 而不是 .tar.xz（避免需要 xz 工具）
   # -L 强制跟随重定向（npmmirror 会 302 到 cdn.npmmirror.com）
+  # 注意：Node 20 需要 glibc 2.28+，对 CentOS 7 / Debian 9 等老系统不兼容
+  #       Node 16 支持 glibc 2.17，兼容绝大多数 Linux 发行版
   if curl -L --proto '=https' --tlsv1.2 -sSf \
         --connect-timeout 10 --max-time 300 \
-        "https://npmmirror.com/mirrors/node/v20.18.0/node-v20.18.0-linux-x64.tar.gz" \
+        "https://cdn.npmmirror.com/binaries/node/v16.20.2/node-v16.20.2-linux-x64.tar.gz" \
         -o /tmp/node.tar.gz; then
     # 验证下载的是真 gzip（防止 HTML 错误页）
     if ! file /tmp/node.tar.gz | grep -q "gzip"; then
