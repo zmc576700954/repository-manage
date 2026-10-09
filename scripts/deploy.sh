@@ -2,11 +2,11 @@
 # Synapse-KB 一键部署脚本
 # 用法：
 #   ./deploy.sh                          # 默认部署（git pull + build + restart）
-#   ./deploy.sh --init                   # 首次部署（git clone + build + restart）
-#   ./deploy.sh --init --repo <URL>      # 指定仓库 URL
+#   ./deploy.sh --init --repo <URL>      # 首次部署（git clone + build + restart）
 #   ./deploy.sh --skip-build             # 只重启服务，不重新编译
 #   ./deploy.sh --reset                  # 强制全量重新编译（清空 target）
 #   SYNAPSE_REPO=/path/to/local ./deploy.sh   # 使用本地代码而非 git pull
+#   RUST_VERSION=1.84.0 ./deploy.sh      # 指定 rustc 版本（默认 1.83.0）
 #
 # 环境变量（可选，会写入 systemd service 文件）：
 #   SYNAPSE_KB_ROOT    - 知识库根目录（默认 /var/lib/synapse-kb/kb）
@@ -62,6 +62,18 @@ fail() { echo "${RED}[$(date +%H:%M:%S)] FAIL${RESET} $*" >&2; exit 1; }
 [[ $(id -u) -eq 0 ]] || fail "must run as root (use sudo)"
 
 # ---------- 仓库准备 ----------
+# 智能处理 origin：如果当前 origin 是 GitHub，提示并询问是否改为 Gitee
+fix_remote_if_github() {
+  local dir="$1"
+  local current=$(git -C "$dir" remote get-url origin 2>/dev/null || echo "")
+  if [[ "$current" == *"github.com"* ]]; then
+    warn "current origin is GitHub: $current"
+    warn "GitHub is slow in China; switching origin to Gitee"
+    git -C "$dir" remote set-url origin "https://gitee.com/zhu_ming_chen/repository-manage.git"
+    log "origin switched to: $(git -C "$dir" remote get-url origin)"
+  fi
+}
+
 if [[ $INIT_MODE -eq 1 ]]; then
   # 首次部署：克隆仓库
   [[ -n "$REPO_URL" ]] || fail "--init requires --repo <URL> or REPO_URL env"
@@ -69,6 +81,7 @@ if [[ $INIT_MODE -eq 1 ]]; then
   if [[ -d "$REPO_DIR/.git" ]]; then
     warn "repo already exists at $REPO_DIR; pulling instead"
     cd "$REPO_DIR"
+    fix_remote_if_github "$REPO_DIR"
     git pull --ff-only
   else
     log "cloning $REPO_URL -> $REPO_DIR"
@@ -80,7 +93,6 @@ if [[ $INIT_MODE -eq 1 ]]; then
         log "trying ghproxy mirror first: $MIRROR_URL"
         if git clone --depth 1 "$MIRROR_URL" "$REPO_DIR" 2>/dev/null; then
           log "cloned via ghproxy"
-          # 把远程地址改回原始地址，便于后续 pull
           cd "$REPO_DIR"
           git remote set-url origin "$REPO_URL"
         else
@@ -92,6 +104,7 @@ if [[ $INIT_MODE -eq 1 ]]; then
         git clone --depth 1 "$REPO_URL" "$REPO_DIR"
         ;;
     esac
+    fix_remote_if_github "$REPO_DIR"
   fi
 elif [[ "${SYNAPSE_REPO:-}" != "" && -d "${SYNAPSE_REPO}" ]]; then
   REPO_DIR="$SYNAPSE_REPO"
@@ -103,18 +116,32 @@ else
   fi
   log "updating repo: $REPO_DIR"
   cd "$REPO_DIR"
+  fix_remote_if_github "$REPO_DIR"
   git pull --ff-only || warn "git pull failed (continuing with current HEAD)"
 fi
 
 # ---------- Rust 工具链 ----------
+# 镜像优先级（按国内可用性排序）：
+#   1. rsproxy.cn  （rust 官方代理，最快）
+#   2. mirrors.ustc.edu.cn  （中科大）
+#   3. mirrors.tuna.tsinghua.edu.cn  （清华）
+#   4. apt 系统包  （最后 fallback，版本可能较旧）
+RUST_MIRRORS=(
+  "https://rsproxy.cn/rustup"
+  "https://mirrors.ustc.edu.cn/rustup"
+  "https://mirrors.tuna.tsinghua.edu.cn/rustup"
+)
+# 固定 rustc 版本（避免 stable 滚动导致元数据不一致）
+RUST_VERSION="${RUST_VERSION:-1.83.0}"
+
 ensure_rust() {
   if command -v cargo >/dev/null 2>&1; then
     log "cargo found: $(cargo --version)"
     return
   fi
-  warn "cargo not found, installing Rust toolchain..."
+  warn "cargo not found, installing Rust toolchain ${RUST_VERSION}..."
 
-  # 重要：必须先写 ~/.cargo/config.toml，rustup-init 才会用国内镜像
+  # 写 cargo 配置（crates 镜像）
   mkdir -p /root/.cargo
   cat > /root/.cargo/config.toml <<'CARGO_EOF'
 [source.crates-io]
@@ -130,34 +157,53 @@ index = "https://rsproxy.cn/crates.io-index"
 git-fetch-with-cli = true
 CARGO_EOF
 
-  # 通过环境变量让 rustup 用国内镜像下载 rustup-init 本身
-  export RUSTUP_DIST_SERVER="https://rsproxy.cn/rustup"
-  export RUSTUP_UPDATE_ROOT="https://rsproxy.cn/rustup"
+  # 依次尝试每个镜像下载 rustup-init
+  local downloaded=0
+  for mirror in "${RUST_MIRRORS[@]}"; do
+    log "trying mirror: $mirror"
+    if curl --proto '=https' --tlsv1.2 -sSf \
+          --connect-timeout 10 --max-time 60 \
+          "${mirror}/rustup-init.sh" -o /tmp/rustup-init.sh; then
+      downloaded=1
+      log "downloaded from $mirror"
+      break
+    else
+      warn "  $mirror failed"
+    fi
+  done
 
-  log "downloading rustup-init from rsproxy.cn..."
-  if ! curl --proto '=https' --tlsv1.2 -sSf \
-        "https://rsproxy.cn/rustup-init.sh" -o /tmp/rustup-init.sh; then
-    warn "rsproxy.cn failed, falling back to mirrors.ustc.edu.cn"
-    curl --proto '=https' --tlsv1.2 -sSf \
-      "https://mirrors.ustc.edu.cn/rustup/rustup-init.sh" -o /tmp/rustup-init.sh \
-      || fail "all rustup mirrors failed"
+  if [[ $downloaded -eq 1 ]]; then
+    # 让 rustup 用第一个镜像下载 toolchain
+    export RUSTUP_DIST_SERVER="${RUST_MIRRORS[0]}"
+    export RUSTUP_UPDATE_ROOT="${RUST_MIRRORS[0]}"
+
+    log "running rustup-init (version ${RUST_VERSION}, this may take 3-5 minutes)..."
+    if bash /tmp/rustup-init.sh -y \
+          --default-toolchain "${RUST_VERSION}" \
+          --profile minimal \
+          --no-modify-path 2>&1 | tail -20; then
+      source /root/.cargo/env
+      if command -v cargo >/dev/null 2>&1; then
+        log "${GREEN}✓ rust installed${RESET}: $(rustc --version)"
+        return
+      fi
+    fi
+    warn "rustup-init failed; falling back to apt"
+  else
+    warn "all rustup mirrors unreachable; falling back to apt"
   fi
 
-  log "running rustup-init (this may take a few minutes)..."
-  bash /tmp/rustup-init.sh -y \
-    --default-toolchain stable \
-    --profile minimal \
-    --no-modify-path
-
-  # 立即让后续命令可用
-  source /root/.cargo/env
-
-  # 验证安装
-  if ! command -v cargo >/dev/null 2>&1; then
-    fail "rust install completed but cargo not found. Check /tmp/rustup-init.log"
+  # 最后 fallback：apt 安装系统包
+  log "trying apt-get install rustc cargo..."
+  if command -v apt-get >/dev/null 2>&1; then
+    apt-get update -qq && apt-get install -y --no-install-recommends rustc cargo
+    if command -v cargo >/dev/null 2>&1; then
+      log "${GREEN}✓ rust installed via apt${RESET}: $(rustc --version)"
+      return
+    fi
   fi
-  log "installed: $(rustc --version)"
-  log "cargo at: $(which cargo)"
+
+  fail "could not install Rust toolchain via any method. Install manually first."
 }
 
 ensure_rust
