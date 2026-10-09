@@ -1,12 +1,14 @@
 import { useEffect } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import { MapView } from '@/views/MapView';
+import { DetailPanel } from '@/views/DetailPanel';
 import { useAppStore } from '@/store/useAppStore';
 
 export default function App() {
   const loadEntries = useAppStore((s) => s.loadEntries);
   const error = useAppStore((s) => s.error);
   const isLoading = useAppStore((s) => s.isLoading);
+  const selectedEntryId = useAppStore((s) => s.selectedEntryId);
 
   useEffect(() => {
     loadEntries();
@@ -29,6 +31,7 @@ export default function App() {
           <MapView />
         )}
       </main>
+      {selectedEntryId && <DetailPanel />}
     </div>
   );
 }
