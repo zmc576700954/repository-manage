@@ -19,7 +19,13 @@ pub fn extract_attachments(content: &str) -> Vec<(String, Option<String>)> {
             if j + 1 < bytes.len() {
                 let inner = &content[i + 3..j];
                 if let Some((path, caption)) = inner.split_once('|') {
-                    attachments.push((path.trim().to_string(), Some(caption.trim().to_string())));
+                    let trimmed_caption = caption.trim();
+                    let caption = if trimmed_caption.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed_caption.to_string())
+                    };
+                    attachments.push((path.trim().to_string(), caption));
                 } else {
                     attachments.push((inner.trim().to_string(), None));
                 }
@@ -86,5 +92,42 @@ mod tests {
         let content = "Regular link [[entry]] here.";
         let atts = extract_attachments(content);
         assert!(atts.is_empty());
+    }
+
+    #[test]
+    fn extracts_multiple_attachments() {
+        let content = r##"![[a.png|甲]] and ![[b.pdf]] and ![[c.gif|丙]]"##;
+        let atts = extract_attachments(content);
+        assert_eq!(atts.len(), 3);
+        assert_eq!(atts[0], ("a.png".to_string(), Some("甲".to_string())));
+        assert_eq!(atts[1], ("b.pdf".to_string(), None));
+        assert_eq!(atts[2], ("c.gif".to_string(), Some("丙".to_string())));
+    }
+
+    #[test]
+    fn trims_whitespace_in_path_and_caption() {
+        let content = "![[  spaced.png  |  caption  ]]";
+        let atts = extract_attachments(content);
+        assert_eq!(atts, vec![("spaced.png".to_string(), Some("caption".to_string()))]);
+    }
+
+    #[test]
+    fn empty_caption_becomes_none() {
+        // ![[path|]] 应该视为无 caption
+        let content = "![[image.png|]]";
+        let atts = extract_attachments(content);
+        assert_eq!(atts, vec![("image.png".to_string(), None)]);
+    }
+
+    #[test]
+    fn classify_handles_uppercase_extensions() {
+        assert_eq!(classify_attachment("PHOTO.PNG"), "image");
+        assert_eq!(classify_attachment("Doc.PDF"), "document");
+    }
+
+    #[test]
+    fn classify_handles_files_with_multiple_dots() {
+        assert_eq!(classify_attachment("archive.tar.gz"), "other");
+        assert_eq!(classify_attachment("my.photo.png"), "image");
     }
 }

@@ -244,4 +244,95 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
     }
+
+    #[tokio::test]
+    async fn delete_relation_returns_204() {
+        let (state, _dir) = make_state();
+
+        // 准备两条 entry 和一条关联
+        let index = state.index.write().await;
+        let entry_b = RawEntry {
+            id: "topic-b".to_string(),
+            title: "Topic B".to_string(),
+            tags: vec![],
+            group: None,
+            path: _dir.path().join("topic-b"),
+            content_path: _dir.path().join("topic-b").join("content.md"),
+            attachments: vec![],
+            linked_targets: vec![],
+            yaml: None,
+            has_content_md: true,
+        };
+        index.upsert_entry(&entry_b).unwrap();
+        index
+            .add_relation("topic-a", "topic-b", "derived", None)
+            .unwrap();
+        drop(index);
+
+        let app = router(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri("/api/relations/topic-a/topic-b/derived")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn create_relation_with_note_persists() {
+        // 准备 a 和 b 两条 entry + 一条关联（带 note）
+        let (state, _dir) = make_state();
+
+        {
+            let index = state.index.write().await;
+            let entry_b = RawEntry {
+                id: "topic-b".to_string(),
+                title: "Topic B".to_string(),
+                tags: vec![],
+                group: None,
+                path: _dir.path().join("topic-b"),
+                content_path: _dir.path().join("topic-b").join("content.md"),
+                attachments: vec![],
+                linked_targets: vec![],
+                yaml: None,
+                has_content_md: true,
+            };
+            index.upsert_entry(&entry_b).unwrap();
+            index
+                .add_relation("topic-a", "topic-b", "extends", Some("深入补充"))
+                .unwrap();
+        }
+
+        let app = router(state);
+
+        // GET /api/entries/topic-a 应该能查到带 note 的关联
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/entries/topic-a")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // 解析 body 验证关系存在且 note 正确
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let relations = parsed["data"]["relations"].as_array().unwrap();
+        assert_eq!(relations.len(), 1);
+        assert_eq!(relations[0]["relation_type"], "extends");
+        assert_eq!(relations[0]["note"], "深入补充");
+    }
 }

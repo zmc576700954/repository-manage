@@ -24,4 +24,12 @@ mod tests {
         let dir = app_data_dir();
         assert!(dir.to_string_lossy().contains("synapse-kb"));
     }
+
+    #[test]
+    fn index_db_path_is_inside_app_data() {
+        let db = index_db_path();
+        let dir = app_data_dir();
+        assert!(db.starts_with(&dir), "{:?} should start with {:?}", db, dir);
+        assert_eq!(db.file_name().and_then(|s| s.to_str()), Some("index.db"));
+    }
 }

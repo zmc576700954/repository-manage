@@ -176,4 +176,81 @@ color: "#5B8DEF"
         assert_eq!(entry.id, "no-title");
         assert_eq!(entry.title, "no-title");
     }
+
+    #[test]
+    fn parses_multiple_tags_from_csv() {
+        let dir = tempdir().unwrap();
+        let entry_dir = dir.path().join("multi");
+        fs::create_dir(&entry_dir).unwrap();
+        fs::write(
+            entry_dir.join("content.md"),
+            r#"<!-- @synapse-id: multi -->
+<!-- @synapse-tags: alpha, beta, gamma -->
+
+content
+"#,
+        )
+        .unwrap();
+
+        let entry = read_entry(&entry_dir);
+        assert_eq!(entry.tags, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn empty_tags_yields_empty_vec() {
+        let dir = tempdir().unwrap();
+        let entry_dir = dir.path().join("notags");
+        fs::create_dir(&entry_dir).unwrap();
+        fs::write(
+            entry_dir.join("content.md"),
+            r#"<!-- @synapse-id: notags -->
+<!-- @synapse-title: No Tags -->
+"#,
+        )
+        .unwrap();
+
+        let entry = read_entry(&entry_dir);
+        assert!(entry.tags.is_empty());
+    }
+
+    #[test]
+    fn falls_back_gracefully_on_invalid_yaml() {
+        let dir = tempdir().unwrap();
+        let entry_dir = dir.path().join("badyaml");
+        fs::create_dir(&entry_dir).unwrap();
+        fs::write(
+            entry_dir.join("content.md"),
+            r##"<!-- @synapse-id: badyaml -->
+
+---
+color: : invalid
+---
+"##,
+        )
+        .unwrap();
+
+        let entry = read_entry(&entry_dir);
+        // YAML 解析失败时不应 panic，应得到 None
+        assert!(entry.yaml.is_none());
+        // 其他字段正常解析
+        assert_eq!(entry.id, "badyaml");
+    }
+
+    #[test]
+    fn detects_linked_targets() {
+        let dir = tempdir().unwrap();
+        let entry_dir = dir.path().join("with-links");
+        fs::create_dir(&entry_dir).unwrap();
+        fs::write(
+            entry_dir.join("content.md"),
+            r#"<!-- @synapse-id: with-links -->
+
+参考 [[other-a]] 和 [[other-b#section]]。
+"#,
+        )
+        .unwrap();
+
+        let entry = read_entry(&entry_dir);
+        assert_eq!(entry.linked_targets, vec!["other-a", "other-b"]);
+    }
 }

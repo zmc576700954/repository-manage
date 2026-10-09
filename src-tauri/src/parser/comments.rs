@@ -86,4 +86,51 @@ body
 
         assert_eq!(metadata.get("id").map(|s| s.as_str()), Some(""));
     }
+
+    #[test]
+    fn parses_group_field() {
+        let content = r#"<!-- @synapse-id: x -->
+<!-- @synapse-group: backend -->
+"#;
+        let metadata = parse_metadata_comments(content);
+        assert_eq!(metadata.get("group").map(|s| s.as_str()), Some("backend"));
+    }
+
+    #[test]
+    fn extracts_value_with_colons() {
+        // 标题里包含冒号，应作为整体保留
+        let content = "<!-- @synapse-title: React: Hooks 深入 -->";
+        let metadata = parse_metadata_comments(content);
+        assert_eq!(
+            metadata.get("title").map(|s| s.as_str()),
+            Some("React: Hooks 深入")
+        );
+    }
+
+    #[test]
+    fn ignores_lines_without_colon() {
+        let content = r#"<!-- @synapse-id -->
+<!-- @synapse-title: Hello -->
+"#;
+        let metadata = parse_metadata_comments(content);
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata.get("title").map(|s| s.as_str()), Some("Hello"));
+    }
+
+    #[test]
+    fn handles_empty_content() {
+        let metadata = parse_metadata_comments("");
+        assert!(metadata.is_empty());
+    }
+
+    #[test]
+    fn ignores_non_comment_lines() {
+        let content = r#"# Heading
+Some text with @synapse-id: ignored
+<!-- @synapse-id: real -->
+"#;
+        let metadata = parse_metadata_comments(content);
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata.get("id").map(|s| s.as_str()), Some("real"));
+    }
 }

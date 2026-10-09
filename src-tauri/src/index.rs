@@ -358,4 +358,90 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].id, "topic");
     }
+
+    #[test]
+    fn relations_are_visible_via_get_all_entries() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let index = Index::open(&db_path).unwrap();
+
+        index.upsert_entry(&make_entry("alpha", "Alpha", dir.path())).unwrap();
+        index.upsert_entry(&make_entry("beta", "Beta", dir.path())).unwrap();
+
+        index
+            .add_relation("alpha", "beta", "reference", Some("see"))
+            .unwrap();
+
+        let entries = index.get_all_entries().unwrap();
+        let alpha = entries.iter().find(|e| e.id == "alpha").unwrap();
+        let beta = entries.iter().find(|e| e.id == "beta").unwrap();
+        assert_eq!(alpha.relations.len(), 1);
+        assert_eq!(alpha.relations[0].from_id, "alpha");
+        assert_eq!(alpha.relations[0].to_id, "beta");
+        assert_eq!(alpha.relations[0].relation_type, "reference");
+        assert_eq!(alpha.relations[0].note.as_deref(), Some("see"));
+        // beta 也应能查到这条双向关联
+        assert_eq!(beta.relations.len(), 1);
+    }
+
+    #[test]
+    fn removing_relation_clears_both_sides() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let index = Index::open(&db_path).unwrap();
+
+        index.upsert_entry(&make_entry("a", "A", dir.path())).unwrap();
+        index.upsert_entry(&make_entry("b", "B", dir.path())).unwrap();
+
+        index.add_relation("a", "b", "derived", None).unwrap();
+        assert!(index
+            .get_all_entries()
+            .unwrap()
+            .iter()
+            .any(|e| e.relations.iter().any(|r| r.relation_type == "derived")));
+
+        index.remove_relation("a", "b", "derived").unwrap();
+        let entries = index.get_all_entries().unwrap();
+        for entry in &entries {
+            assert!(
+                entry.relations.is_empty(),
+                "entry {} still has relations",
+                entry.id
+            );
+        }
+    }
+
+    #[test]
+    fn duplicate_relation_is_ignored() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let index = Index::open(&db_path).unwrap();
+
+        index.upsert_entry(&make_entry("x", "X", dir.path())).unwrap();
+        index.upsert_entry(&make_entry("y", "Y", dir.path())).unwrap();
+
+        index.add_relation("x", "y", "extends", None).unwrap();
+        index.add_relation("x", "y", "extends", None).unwrap(); // 重复
+
+        let entries = index.get_all_entries().unwrap();
+        let x = entries.iter().find(|e| e.id == "x").unwrap();
+        assert_eq!(x.relations.len(), 1);
+    }
+
+    #[test]
+    fn upsert_replaces_group_name() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let index = Index::open(&db_path).unwrap();
+
+        let mut entry = make_entry("g", "G", dir.path());
+        entry.group = Some("old".to_string());
+        index.upsert_entry(&entry).unwrap();
+
+        entry.group = Some("new".to_string());
+        index.upsert_entry(&entry).unwrap();
+
+        let entries = index.get_all_entries().unwrap();
+        assert_eq!(entries[0].group.as_deref(), Some("new"));
+    }
 }

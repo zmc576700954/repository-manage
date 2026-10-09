@@ -102,4 +102,42 @@ shape: rect
         let yaml = "color: : invalid";
         assert!(parse_yaml_fields(yaml).is_err());
     }
+
+    #[test]
+    fn extracts_frontmatter_after_html_comments() {
+        // 真实场景：HTML 注释在前，YAML 在后
+        let content = r##"<!-- @synapse-id: react-hooks -->
+<!-- @synapse-title: React Hooks -->
+
+---
+color: "#5B8DEF"
+shape: rect
+---
+
+# Content
+"##;
+        let yaml = extract_yaml_frontmatter(content).unwrap();
+        assert!(yaml.contains("color"));
+        assert!(yaml.contains("shape"));
+    }
+
+    #[test]
+    fn parses_negative_order() {
+        let yaml = "order: -3\n";
+        let parsed = parse_yaml_fields(yaml).unwrap();
+        assert_eq!(parsed.order, Some(-3));
+    }
+
+    #[test]
+    fn parses_pinned_false() {
+        let yaml = "pinned: false\n";
+        let parsed = parse_yaml_fields(yaml).unwrap();
+        assert_eq!(parsed.pinned, Some(false));
+    }
+
+    #[test]
+    fn returns_none_for_unclosed_frontmatter() {
+        let content = "---\ncolor: red\n";
+        assert!(extract_yaml_frontmatter(content).is_none());
+    }
 }

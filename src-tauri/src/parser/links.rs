@@ -86,4 +86,35 @@ mod tests {
         let links = extract_double_bracket_links(content);
         assert!(links.is_empty());
     }
+
+    #[test]
+    fn handles_utf8_content() {
+        let content = "参考 [[条目-中文]] 和 [[another]]";
+        let links = extract_double_bracket_links(content);
+        assert_eq!(links, vec!["条目-中文", "another"]);
+    }
+
+    #[test]
+    fn handles_links_in_code_fence() {
+        // 简单实现不区分代码块，原样提取
+        let content = "```\n[[code-link]]\n```\n[[real-link]]";
+        let links = extract_double_bracket_links(content);
+        assert_eq!(links, vec!["code-link", "real-link"]);
+    }
+
+    #[test]
+    fn strips_block_reference_with_empty_block() {
+        // [[entry#]] 形式：空块引用
+        let content = "See [[entry#]]";
+        let links = extract_double_bracket_links(content);
+        assert_eq!(links, vec!["entry"]);
+    }
+
+    #[test]
+    fn empty_link_target_is_skipped() {
+        // [[]] 应该跳过，因为 target 为空
+        let content = "Empty [[]] and [[real]]";
+        let links = extract_double_bracket_links(content);
+        assert_eq!(links, vec!["real"]);
+    }
 }
