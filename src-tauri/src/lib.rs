@@ -1,4 +1,5 @@
 pub mod parser;
+pub mod scanner;
 
 // 占位 - 后续任务会填充真实实现
 pub fn run() {}
