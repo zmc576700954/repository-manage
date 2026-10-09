@@ -63,9 +63,10 @@ warn() { echo "${YELLOW}[$(date +%H:%M:%S)] WARN${RESET} $*" >&2; }
 fail() { echo "${RED}[$(date +%H:%M:%S)] FAIL${RESET} $*" >&2; exit 1; }
 
 # 宝塔兼容：自动检测 /www/wwwroot 下的项目目录
-# 优先级：SYNAPSE_REPO 环境变量 > 宝塔自动检测 > APP_HOME/repo（默认）
+# 优先级：SYNAPSE_REPO 环境变量 > 宝塔自动检测 > 当前目录（cwd）> APP_HOME/repo
 # 匹配规则：路径下存在 deploy.sh 或 .git
 if [[ -z "${SYNAPSE_REPO:-}" && -d "/www/wwwroot" ]]; then
+  # 优先匹配两层结构 /www/wwwroot/*/repository-manage（kb.zhumingchen.cn 风格）
   for site_dir in /www/wwwroot/*/repository-manage; do
     if [[ -d "$site_dir/.git" || -f "$site_dir/scripts/deploy.sh" ]]; then
       export SYNAPSE_REPO="$site_dir"
@@ -73,6 +74,21 @@ if [[ -z "${SYNAPSE_REPO:-}" && -d "/www/wwwroot" ]]; then
       break
     fi
   done
+  # 退而求其次：匹配一层结构 /www/wwwroot/repository-manage
+  if [[ -z "${SYNAPSE_REPO:-}" && -d "/www/wwwroot/repository-manage" ]]; then
+    if [[ -d "/www/wwwroot/repository-manage/.git" || -f "/www/wwwroot/repository-manage/scripts/deploy.sh" ]]; then
+      export SYNAPSE_REPO="/www/wwwroot/repository-manage"
+      log "auto-detected 宝塔 repo at: $SYNAPSE_REPO"
+    fi
+  fi
+fi
+
+# 再次 fallback：如果还没检测到，且当前目录有 deploy.sh 或 .git
+if [[ -z "${SYNAPSE_REPO:-}" ]]; then
+  if [[ -d "./.git" || -f "./scripts/deploy.sh" ]]; then
+    export SYNAPSE_REPO="$(pwd)"
+    log "using cwd as repo: $SYNAPSE_REPO"
+  fi
 fi
 
 # ---------- 预检 ----------
