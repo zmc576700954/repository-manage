@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Sidebar } from '@/components/Sidebar';
+import { MapView } from '@/views/MapView';
 import { useAppStore } from '@/store/useAppStore';
 
 export default function App() {
@@ -14,14 +15,18 @@ export default function App() {
   return (
     <div className="flex h-screen w-screen bg-gray-50 text-gray-900">
       <Sidebar />
-      <main className="flex-1">
+      <main className="relative flex-1">
         {error && (
-          <div className="m-4 rounded-md bg-red-50 p-3 text-sm text-red-700">
+          <div className="absolute left-4 right-4 top-4 z-10 rounded-md bg-red-50 p-3 text-sm text-red-700 shadow-sm">
             {error}
           </div>
         )}
-        {isLoading && (
-          <div className="m-4 text-sm text-gray-500">Loading...</div>
+        {isLoading ? (
+          <div className="flex h-full items-center justify-center text-sm text-gray-500">
+            Loading...
+          </div>
+        ) : (
+          <MapView />
         )}
       </main>
     </div>
