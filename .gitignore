@@ -14,3 +14,7 @@ npm-debug.log*
 .DS_Store
 .idea/
 .vscode/
+
+# Local build artifacts (built with Docker)
+dist-out/
+synapse-kb-*.tar.gz
