@@ -1,4 +1,5 @@
 pub mod entry;
+pub mod layout_store;
 pub mod parser;
 pub mod scanner;
 
