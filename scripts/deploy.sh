@@ -157,13 +157,13 @@ else
 fi
 
 # ---------- Rust 工具链 ----------
-# 镜像优先级（按国内可用性排序）：
-#   1. rsproxy.cn  （rust 官方代理，最快）
-#   2. mirrors.ustc.edu.cn  （中科大）
-#   3. mirrors.tuna.tsinghua.edu.cn  （清华）
-#   4. apt 系统包  （最后 fallback，版本可能较旧）
+# rsproxy.cn 镜像配置（关键：RUSTUP_DIST_SERVER 不能带 /rustup 后缀！）
+#   RUSTUP_DIST_SERVER  - toolchain 实际下载位置（不带路径）
+#   RUSTUP_UPDATE_ROOT  - rustup 元数据（带 /rustup）
+RUST_DIST_SERVER="${RUSTUP_DIST_SERVER:-https://rsproxy.cn}"
+RUST_UPDATE_ROOT="${RUSTUP_UPDATE_ROOT:-https://rsproxy.cn/rustup}"
 RUST_MIRRORS=(
-  "https://rsproxy.cn/rustup"
+  "https://rsproxy.cn/rustup"      # rsproxy - 实际下载 rustup-init 用
   "https://mirrors.ustc.edu.cn/rustup"
   "https://mirrors.tuna.tsinghua.edu.cn/rustup"
 )
@@ -219,9 +219,10 @@ CARGO_EOF
   done
 
   if [[ $downloaded -eq 1 ]]; then
-    # 让 rustup 用第一个镜像下载 toolchain
-    export RUSTUP_DIST_SERVER="${RUST_MIRRORS[0]}"
-    export RUSTUP_UPDATE_ROOT="${RUST_MIRRORS[0]}"
+    # 关键修正：RUSTUP_DIST_SERVER 不能带 /rustup 后缀
+    # RUSTUP_UPDATE_ROOT 才是 /rustup 路径
+    export RUSTUP_DIST_SERVER="$RUST_DIST_SERVER"
+    export RUSTUP_UPDATE_ROOT="$RUST_UPDATE_ROOT"
 
     # 尝试多个 rustc 版本（rsproxy 对不同版本同步速度不同）
     local versions_to_try=()
