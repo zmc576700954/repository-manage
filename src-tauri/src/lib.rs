@@ -1,53 +1,86 @@
-pub mod commands;
 pub mod entry;
 pub mod error;
 pub mod index;
+pub mod kb_registry;
 pub mod layout_store;
-pub mod local_server;
 pub mod parser;
 pub mod paths;
 pub mod scanner;
 pub mod state;
 
-use std::path::PathBuf;
+#[cfg(feature = "tauri")]
+pub mod commands;
+
+#[cfg(feature = "tauri")]
 use std::sync::Arc;
+#[cfg(feature = "tauri")]
 use tokio::sync::RwLock;
 
+#[cfg(feature = "tauri")]
 use crate::index::Index;
-use crate::local_server::{serve as serve_local, AppState as ServerState};
+#[cfg(feature = "tauri")]
+use crate::kb_registry::KbRegistry;
+#[cfg(feature = "tauri")]
 use crate::state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[cfg(feature = "tauri")]
 pub fn run() {
-    let index = Index::open_default().expect("Failed to open index");
+    use std::path::PathBuf;
 
-    let kb_root: Arc<RwLock<Option<PathBuf>>> = Arc::new(RwLock::new(None));
-    let index_arc = Arc::new(RwLock::new(index));
+    let registry = KbRegistry::load_or_default();
+    let active = registry.active().cloned();
 
-    let app_state = AppState {
-        kb_root: kb_root.clone(),
-        index: index_arc.clone(),
+    let initial_index = match active.as_ref() {
+        Some(kb) => match Index::open(&registry.index_db_path_for(&kb.id)) {
+            Ok(idx) => idx,
+            Err(e) => panic!("Failed to open index: {e}"),
+        },
+        None => match Index::open_default() {
+            Ok(idx) => idx,
+            Err(e) => panic!("Failed to open index: {e}"),
+        },
     };
 
-    let server_state = ServerState {
+    // 启动时强制 rebuild 当前 KB — 避免旧 DB schema/group 与代码不一致
+    if let Some(kb) = active.as_ref() {
+        let kb_path = PathBuf::from(&kb.path);
+        if kb_path.exists() {
+            if let Err(e) = initial_index.rebuild(&kb_path) {
+                eprintln!("[startup] rebuild active KB failed: {e}");
+            }
+        }
+    }
+
+    let index_arc = Arc::new(RwLock::new(initial_index));
+    let kbs_arc = Arc::new(RwLock::new(registry));
+    let current_kb_arc = Arc::new(RwLock::new(active));
+
+    let app_state = AppState {
         index: index_arc.clone(),
+        kbs: kbs_arc.clone(),
+        current_kb: current_kb_arc.clone(),
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
-            commands::set_kb_root,
             commands::get_entries,
-            commands::rebuild_index,
+            commands::create_relation,
+            commands::delete_relation,
+            commands::create_entry_simple,
+            commands::list_kbs,
+            commands::add_kb,
+            commands::remove_kb,
+            commands::set_active_kb,
+            commands::get_active_kb,
+            commands::rebuild_active_kb,
+            commands::active_kb_entry_count,
+            commands::get_entry_content,
+            commands::create_entry_from_reference,
         ])
-        .setup(move |_app| {
-            tokio::spawn(async move {
-                if let Err(e) = serve_local(server_state).await {
-                    tracing::error!("Local server error: {}", e);
-                }
-            });
-            Ok(())
-        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
