@@ -146,7 +146,11 @@ pub fn extract_relations(content: &str) -> Vec<Relation> {
             continue;
         };
         let rest = rest.trim();
-        let Some((rtype, target_part)) = rest.split_once(' ') else {
+        let mut parts = rest.splitn(2, char::is_whitespace);
+        let Some(rtype) = parts.next() else {
+            continue;
+        };
+        let Some(target_part) = parts.next() else {
             continue;
         };
         let rtype = rtype.trim();
