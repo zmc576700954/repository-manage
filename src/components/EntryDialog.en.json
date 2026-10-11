@@ -1,0 +1,38 @@
+{
+  "title": "New Document",
+  "modeDesc": {
+    "ungrouped": "Create a new .md document in the KB root.",
+    "inGroup": "Create a new .md document under group \"{{group}}\".",
+    "asChild": "Create a child document for \"{{title}}\".",
+    "asParent": "Create a parent document for \"{{title}}\"."
+  },
+  "targetKbHeader": "Target knowledge base",
+  "groupLabel": "Group",
+  "groupLockedSuffix": "(locked)",
+  "groupRootOption": "KB root (no group)",
+  "groupCustomOption": "Custom path (e.g. compliance/gdpr)…",
+  "groupCustomPlaceholder": "Multi-level path, e.g. compliance/gdpr",
+  "groupDetermined": "Determined by creation location",
+  "savePathHint": "File will be saved to",
+  "nameLabel": "File name (without .md)",
+  "namePlaceholder": "e.g. gdpr-official-text",
+  "contentLabel": "Initial content (optional)",
+  "contentPlaceholder": "# Title\n\nBody…",
+  "linkHeader": "Create a relation",
+  "linkDirLabel": "Relation direction",
+  "linkDirParentLabel": "New document is the parent",
+  "linkDirParentHint": "Append a reference to \"{{title}}\" in the new .md",
+  "linkDirChildLabel": "New document is the child",
+  "linkDirChildHint": "Append a reference to the new document in \"{{title}}\".md",
+  "relationTypeLabel": "Relation type",
+  "noteLabel": "Note (optional)",
+  "notePlaceholder": "Relation note",
+  "cancel": "Cancel",
+  "submitIdle": "Create",
+  "submitBusy": "Creating…",
+  "errors": {
+    "nameRequired": "Please enter a file name",
+    "customGroupRequired": "When \"new group\" is selected, a group name is required",
+    "createFailed": "Creation failed; see error in store"
+  }
+}

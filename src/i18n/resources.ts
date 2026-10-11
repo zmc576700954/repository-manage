@@ -10,11 +10,13 @@ import RelationDialogZh from '../components/RelationDialog.zh.json';
 import RelationDialogEn from '../components/RelationDialog.en.json';
 import MapViewZh from '../views/MapView.zh.json';
 import MapViewEn from '../views/MapView.en.json';
+import EntryDialogZh from '../components/EntryDialog.zh.json';
+import EntryDialogEn from '../components/EntryDialog.en.json';
 
-export const NS = ['App', 'Settings', 'Sidebar', 'NodeCard', 'RelationDialog', 'MapView'] as const;
+export const NS = ['App', 'Settings', 'Sidebar', 'NodeCard', 'RelationDialog', 'MapView', 'EntryDialog'] as const;
 export type Namespace = (typeof NS)[number];
 
 export const resources = {
-  zh: { App: AppZh, Settings: SettingsZh, Sidebar: SidebarZh, NodeCard: NodeCardZh, RelationDialog: RelationDialogZh, MapView: MapViewZh },
-  en: { App: AppEn, Settings: SettingsEn, Sidebar: SidebarEn, NodeCard: NodeCardEn, RelationDialog: RelationDialogEn, MapView: MapViewEn },
+  zh: { App: AppZh, Settings: SettingsZh, Sidebar: SidebarZh, NodeCard: NodeCardZh, RelationDialog: RelationDialogZh, MapView: MapViewZh, EntryDialog: EntryDialogZh },
+  en: { App: AppEn, Settings: SettingsEn, Sidebar: SidebarEn, NodeCard: NodeCardEn, RelationDialog: RelationDialogEn, MapView: MapViewEn, EntryDialog: EntryDialogEn },
 } as const;

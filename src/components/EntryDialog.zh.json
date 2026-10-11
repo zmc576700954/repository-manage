@@ -1,0 +1,38 @@
+{
+  "title": "新建文档",
+  "modeDesc": {
+    "ungrouped": "在 KB 根目录创建一个新的 .md 文档。",
+    "inGroup": "在分组「{{group}}」下创建一个新的 .md 文档。",
+    "asChild": "为「{{title}}」创建一个下级文档。",
+    "asParent": "为「{{title}}」创建一个上级文档。"
+  },
+  "targetKbHeader": "目标知识库",
+  "groupLabel": "所属分组",
+  "groupLockedSuffix": "（已锁定）",
+  "groupRootOption": "KB 根目录（无分组）",
+  "groupCustomOption": "自定义路径（如 compliance/gdpr）…",
+  "groupCustomPlaceholder": "多级路径，如 compliance/gdpr",
+  "groupDetermined": "由创建位置决定",
+  "savePathHint": "文件将保存到",
+  "nameLabel": "文件名（不含 .md）",
+  "namePlaceholder": "例如 gdpr-official-text",
+  "contentLabel": "初始内容（可选）",
+  "contentPlaceholder": "# 标题\n\n正文…",
+  "linkHeader": "建立关联",
+  "linkDirLabel": "关联方向",
+  "linkDirParentLabel": "新文档是上级",
+  "linkDirParentHint": "在新文档的 .md 追加对「{{title}}」的引用",
+  "linkDirChildLabel": "新文档是下级",
+  "linkDirChildHint": "在「{{title}}」.md 追加对新文档的引用",
+  "relationTypeLabel": "关系类型",
+  "noteLabel": "Note（可选）",
+  "notePlaceholder": "关系说明",
+  "cancel": "取消",
+  "submitIdle": "创建",
+  "submitBusy": "创建中…",
+  "errors": {
+    "nameRequired": "请填写文件名",
+    "customGroupRequired": "选择了「新建分组」时必须填一个分组名",
+    "createFailed": "创建失败，详见 store 中的 error"
+  }
+}
