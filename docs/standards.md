@@ -1,5 +1,10 @@
 # Synapse KB File Format Standards
 
+> ⚠️ 本文档已被 [KB Standards v2 设计方案](./superpowers/specs/2026-10-12-kb-standards-v2-design.md) 替代。
+> 新功能（labels / 校验 / labels 迁移）请参考新规范。
+
+---
+
 ## Directory Structure
 
 ```
