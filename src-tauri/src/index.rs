@@ -7,13 +7,42 @@ use crate::entry::{read_md_file, RawEntry};
 use crate::paths::index_db_path;
 use crate::scanner::find_md_files;
 
+/// Parse a JSON array string from SQLite back into a `Vec<String>`.
+/// Returns an empty vec when the column is NULL or holds an empty string
+/// (older rows or DEFAULT-initialised columns). On malformed JSON we
+/// return an empty vec rather than erroring — the UI simply shows the
+/// entry without those labels/aliases/ignored rules, and the next
+/// rebuild overwrites the bad value.
+fn parse_json_vec(s: &Option<String>) -> Vec<String> {
+    let s = match s.as_deref() {
+        Some(v) if !v.is_empty() => v,
+        _ => return Vec::new(),
+    };
+    serde_json::from_str::<Vec<String>>(s).unwrap_or_default()
+}
+
+// Schema notes for KB Standards v2:
+// The entries table is created via `CREATE TABLE IF NOT EXISTS`, so any
+// existing on-disk DB created BEFORE these columns landed will not get
+// them added automatically — `IF NOT EXISTS` is a no-op on the second
+// open. For dev/test we just delete `~/.local/share/synapse/index.db`.
+// Production migration (Task 2.4) adds ALTER TABLE fallbacks.
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS entries (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     path TEXT NOT NULL,
     group_name TEXT,
-    has_content_md INTEGER NOT NULL DEFAULT 1
+    has_content_md INTEGER NOT NULL DEFAULT 1,
+    labels TEXT,
+    status TEXT,
+    aliases TEXT,
+    source TEXT,
+    created TEXT,
+    updated TEXT,
+    ignored_rules TEXT,
+    error_count INTEGER NOT NULL DEFAULT 0,
+    warning_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS tags (
@@ -64,6 +93,15 @@ pub struct StoredEntry {
     pub attachments: Vec<StoredAttachment>,
     pub relations: Vec<StoredRelation>,
     pub has_content_md: bool,
+    pub labels: Vec<String>,
+    pub status: Option<String>,
+    pub aliases: Vec<String>,
+    pub source: Option<String>,
+    pub created: Option<String>,
+    pub updated: Option<String>,
+    pub ignored_rules: Vec<String>,
+    pub error_count: u32,
+    pub warning_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,10 +152,48 @@ impl Index {
     /// entries = 1000 `conn.lock()` acquisitions and 3000-5000 separate
     /// `INSERT`/`DELETE` round-trips. Post-fix: rebuild acquires the
     /// mutex once and wraps all upserts in a single transaction.
+    ///
+    /// `labels`, `aliases`, and `ignored_rules` are serialized to JSON
+    /// arrays before storage. `error_count` / `warning_count` are derived
+    /// from the cached `validation` vec (errors vs. warnings) rather than
+    /// storing the full issue list — the UI only needs the counts; the
+    /// issue details are recomputed by the validator.
     fn upsert_entry_in_tx(conn: &Connection, entry: &RawEntry) -> rusqlite::Result<()> {
+        let labels_json = serde_json::to_string(&entry.labels).unwrap_or_else(|_| "[]".to_string());
+        let aliases_json = serde_json::to_string(&entry.aliases).unwrap_or_else(|_| "[]".to_string());
+        let ignored_json = serde_json::to_string(&entry.ignored_rules).unwrap_or_else(|_| "[]".to_string());
+        let error_count = entry
+            .validation
+            .iter()
+            .filter(|v| v.severity == "error")
+            .count() as i32;
+        let warning_count = entry
+            .validation
+            .iter()
+            .filter(|v| v.severity == "warning")
+            .count() as i32;
+
         conn.execute(
-            "INSERT OR REPLACE INTO entries (id, title, path, group_name, has_content_md) VALUES (?, ?, ?, ?, ?)",
-            params![entry.id, entry.title, entry.path.to_string_lossy(), entry.group, entry.has_content_md as i32],
+            "INSERT OR REPLACE INTO entries (id, title, path, group_name, has_content_md, \
+             labels, status, aliases, source, created, updated, ignored_rules, \
+             error_count, warning_count) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                entry.id,
+                entry.title,
+                entry.path.to_string_lossy(),
+                entry.group,
+                entry.has_content_md as i32,
+                labels_json,
+                entry.status,
+                aliases_json,
+                entry.source,
+                entry.created,
+                entry.updated,
+                ignored_json,
+                error_count,
+                warning_count,
+            ],
         )?;
 
         conn.execute("DELETE FROM tags WHERE entry_id = ?", params![entry.id])?;
@@ -171,10 +247,16 @@ impl Index {
     pub fn get_all_entries(&self) -> rusqlite::Result<Vec<StoredEntry>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, title, path, group_name, has_content_md FROM entries ORDER BY id",
+            "SELECT id, title, path, group_name, has_content_md, \
+                    labels, status, aliases, source, created, updated, ignored_rules, \
+                    error_count, warning_count \
+             FROM entries ORDER BY id",
         )?;
 
         let entries_iter = stmt.query_map([], |row| {
+            let labels_json: Option<String> = row.get(5)?;
+            let aliases_json: Option<String> = row.get(7)?;
+            let ignored_json: Option<String> = row.get(11)?;
             Ok(StoredEntry {
                 id: row.get(0)?,
                 title: row.get(1)?,
@@ -184,6 +266,15 @@ impl Index {
                 attachments: vec![],
                 relations: vec![],
                 has_content_md: row.get::<_, i32>(4)? != 0,
+                labels: parse_json_vec(&labels_json),
+                status: row.get(6)?,
+                aliases: parse_json_vec(&aliases_json),
+                source: row.get(8)?,
+                created: row.get(9)?,
+                updated: row.get(10)?,
+                ignored_rules: parse_json_vec(&ignored_json),
+                error_count: row.get::<_, i32>(12)?.max(0) as u32,
+                warning_count: row.get::<_, i32>(13)?.max(0) as u32,
             })
         })?;
 
@@ -627,6 +718,86 @@ mod tests {
         assert_eq!(entries[0].tags, vec!["tag1", "tag2"]);
         assert_eq!(entries[0].attachments.len(), 1);
         assert_eq!(entries[0].attachments[0].path, "./img.png");
+    }
+
+    /// Round-trip test for the 8 KB Standards v2 columns added to the
+    /// entries table: `labels`, `status`, `aliases`, `source`, `created`,
+    /// `updated`, `ignored_rules`, plus the cached `error_count` /
+    /// `warning_count` derived from `validation`. Verifies that the
+    /// JSON-array serialisation for the Vec fields and the count
+    /// derivation both survive an upsert + read.
+    #[test]
+    fn upserts_and_retrieves_kb_v2_fields() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let index = Index::open(&db_path).unwrap();
+
+        let mut entry = make_entry("v2", "V2 Entry", dir.path());
+        entry.labels = vec!["important".to_string(), "wip".to_string()];
+        entry.status = Some("draft".to_string());
+        entry.aliases = vec!["旧名".to_string()];
+        entry.source = Some("https://example.com".to_string());
+        entry.created = Some("2026-01-01".to_string());
+        entry.updated = Some("2026-10-12".to_string());
+        entry.ignored_rules = vec!["W5".to_string(), "E12".to_string()];
+        entry.validation = vec![
+            crate::validator::ValidationIssue {
+                rule_id: "E1".to_string(),
+                message: "first error".to_string(),
+                severity: "error".to_string(),
+            },
+            crate::validator::ValidationIssue {
+                rule_id: "W1".to_string(),
+                message: "first warn".to_string(),
+                severity: "warning".to_string(),
+            },
+            crate::validator::ValidationIssue {
+                rule_id: "W2".to_string(),
+                message: "second warn".to_string(),
+                severity: "warning".to_string(),
+            },
+        ];
+
+        index.upsert_entry(&entry).unwrap();
+
+        let entries = index.get_all_entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        let got = &entries[0];
+        assert_eq!(got.labels, vec!["important", "wip"]);
+        assert_eq!(got.status.as_deref(), Some("draft"));
+        assert_eq!(got.aliases, vec!["旧名"]);
+        assert_eq!(got.source.as_deref(), Some("https://example.com"));
+        assert_eq!(got.created.as_deref(), Some("2026-01-01"));
+        assert_eq!(got.updated.as_deref(), Some("2026-10-12"));
+        assert_eq!(got.ignored_rules, vec!["W5", "E12"]);
+        assert_eq!(got.error_count, 1);
+        assert_eq!(got.warning_count, 2);
+    }
+
+    /// Defaults for the new columns when an entry doesn't set them:
+    /// empty Vecs, None for scalars, zero counts. The `make_entry`
+    /// helper exercises this path; we read it back to confirm the
+    /// DEFAULT clauses don't trip the row's NOT NULL constraints.
+    #[test]
+    fn upsert_with_unset_v2_fields_round_trips_empty_defaults() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let index = Index::open(&db_path).unwrap();
+
+        let entry = make_entry("plain", "Plain", dir.path());
+        index.upsert_entry(&entry).unwrap();
+
+        let entries = index.get_all_entries().unwrap();
+        let got = &entries[0];
+        assert!(got.labels.is_empty());
+        assert!(got.status.is_none());
+        assert!(got.aliases.is_empty());
+        assert!(got.source.is_none());
+        assert!(got.created.is_none());
+        assert!(got.updated.is_none());
+        assert!(got.ignored_rules.is_empty());
+        assert_eq!(got.error_count, 0);
+        assert_eq!(got.warning_count, 0);
     }
 
     #[test]
