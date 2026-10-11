@@ -125,6 +125,12 @@ pub fn run() {
             commands::active_kb_entry_count,
             commands::get_entry_content,
             commands::create_entry_from_reference,
+            commands::validate_kb,
+            commands::validate_entry,
+            commands::get_system_labels,
+            commands::run_validation,
+            commands::get_kb_config,
+            commands::update_kb_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

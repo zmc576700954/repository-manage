@@ -10,14 +10,16 @@ use std::path::Path;
 
 use crate::entry::RawEntry;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub enum Severity {
     Error,
     Warning,
     Info,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidationIssue {
     pub entry_id: String,
     pub rule_id: String,
@@ -27,7 +29,7 @@ pub struct ValidationIssue {
     pub ignored: bool,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct ValidationReport {
     pub kb_root: String,
     pub issues: Vec<ValidationIssue>,

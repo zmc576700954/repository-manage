@@ -4,6 +4,7 @@ use crate::error::{AppError, AppResult};
 use crate::index::{Index, StoredEntry};
 use crate::kb_registry::KBInfo;
 use crate::state::AppState;
+use crate::validator::{self, Severity, ValidationIssue, ValidationReport};
 use std::path::{Component, Path, PathBuf};
 use tauri::State;
 
@@ -524,6 +525,133 @@ pub async fn create_entry_from_reference(
     }
 
     Ok(new_id)
+}
+
+// ---------- Validation & KB config commands (Task 4.2) ----------
+
+/// Run full validation against the KB at `kb_root`, cache the report in
+/// `state.validation_report`, and return it to the frontend. The cache is
+/// what the startup hook (`run_validation`) and a manual "Validate now"
+/// button share — keeping one report in state avoids drift between the
+/// two paths. Per plan, `validate_kb` and `run_validation` are identical
+/// today; they may diverge later (manual vs. startup trigger).
+#[tauri::command(rename_all = "camelCase")]
+pub async fn validate_kb(
+    state: State<'_, AppState>,
+    kb_root: PathBuf,
+) -> AppResult<ValidationReport> {
+    let report = validator::validate_kb(&kb_root);
+    *state.validation_report.write().await = Some(report.clone());
+    Ok(report)
+}
+
+/// Validate a single entry by directory path. Used by the frontend's
+/// "Validate this file" affordance and by per-entry edit-time checks.
+/// Returns the raw issues from the rule engine — the frontend decides
+/// how to surface them.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn validate_entry(
+    _state: State<'_, AppState>,
+    entry_dir: PathBuf,
+) -> AppResult<Vec<ValidationIssue>> {
+    use crate::entry::read_entry;
+    let entry = read_entry(&entry_dir);
+    let all_ids: std::collections::HashSet<String> =
+        std::iter::once(entry.id.clone()).collect();
+    Ok(validator::rules::check_all(
+        &entry,
+        &entry_dir,
+        &all_ids,
+    ))
+}
+
+/// Return `(entry_id, rule_id)` for every `Info`-level issue in the KB's
+/// validation report. The frontend uses these as "system labels" —
+/// soft hints derived from rules, shown alongside user-authored labels.
+/// We filter by `Severity::Info` only (warnings/errors are surfaced
+/// separately as problems, not as labels). Per spec, `get_system_labels`
+/// ignores the on-disk entry scan — the report already carries all
+/// the info we need.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_system_labels(
+    _state: State<'_, AppState>,
+    kb_root: PathBuf,
+) -> AppResult<Vec<(String, String)>> {
+    let report = validator::validate_kb(&kb_root);
+    let info_labels: Vec<(String, String)> = report
+        .issues
+        .into_iter()
+        .filter(|i| matches!(i.severity, Severity::Info))
+        .map(|i| (i.entry_id, i.rule_id))
+        .collect();
+    Ok(info_labels)
+}
+
+/// Startup-time validation hook. Identical to `validate_kb` today;
+/// per plan they exist separately so they can diverge later (manual
+/// vs. startup trigger path).
+#[tauri::command(rename_all = "camelCase")]
+pub async fn run_validation(
+    state: State<'_, AppState>,
+    kb_root: PathBuf,
+) -> AppResult<ValidationReport> {
+    let report = validator::validate_kb(&kb_root);
+    *state.validation_report.write().await = Some(report.clone());
+    Ok(report)
+}
+
+/// Read `.synapse-config.yaml` from `kb_root` and return it as JSON for
+/// the frontend settings panel. When the file is absent, return an
+/// empty JSON object — that's the "no config yet" signal the UI uses
+/// to show defaults without forcing the user to create a file first.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_kb_config(
+    _state: State<'_, AppState>,
+    kb_root: PathBuf,
+) -> AppResult<serde_json::Value> {
+    let config_path = kb_root.join(".synapse-config.yaml");
+    if !config_path.exists() {
+        return Ok(serde_json::json!({}));
+    }
+    let content = std::fs::read_to_string(&config_path).map_err(|e| AppError::io(
+        format!("get_kb_config: read {}", config_path.display()),
+        e,
+    ))?;
+    let value: serde_yaml::Value =
+        serde_yaml::from_str(&content).map_err(|e| AppError::DatabaseOp {
+            message: format!("get_kb_config: parse {}: {e}", config_path.display()),
+        })?;
+    let json_value: serde_json::Value =
+        serde_json::to_value(&value).map_err(|e| AppError::DatabaseOp {
+            message: format!("get_kb_config: convert YAML→JSON: {e}"),
+        })?;
+    Ok(json_value)
+}
+
+/// Overwrite `.synapse-config.yaml` under `kb_root` with the JSON `config`
+/// the frontend sent. Per plan: no merge — this is a full replace. The
+/// frontend assembles the full desired config from current values +
+/// pending edits and round-trips it here, so a fresh file with just
+/// the user's edits is exactly what we want.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn update_kb_config(
+    _state: State<'_, AppState>,
+    kb_root: PathBuf,
+    config: serde_json::Value,
+) -> AppResult<()> {
+    let config_path = kb_root.join(".synapse-config.yaml");
+    let yaml_value: serde_yaml::Value =
+        serde_yaml::to_value(&config).map_err(|e| AppError::DatabaseOp {
+            message: format!("update_kb_config: convert JSON→YAML: {e}"),
+        })?;
+    let yaml_string = serde_yaml::to_string(&yaml_value).map_err(|e| AppError::DatabaseOp {
+        message: format!("update_kb_config: serialize YAML: {e}"),
+    })?;
+    std::fs::write(&config_path, yaml_string).map_err(|e| AppError::io(
+        format!("update_kb_config: write {}", config_path.display()),
+        e,
+    ))?;
+    Ok(())
 }
 
 fn pathdiff(from_dir: &std::path::Path, to: &std::path::Path) -> String {
