@@ -30,6 +30,7 @@ export interface Entry {
   id: string;
   title: string;
   tags: string[];
+  labels: string[];
   group?: string;
   path: string;
   contentPath: string;

@@ -7,6 +7,7 @@ interface AppState {
   entries: Entry[];
   selectedEntryId: string | null;
   relationFilter: Set<RelationType>;
+  filterLabels: Set<string>;
   isLoading: boolean;
   error: string | null;
 
@@ -17,6 +18,8 @@ interface AppState {
   loadEntries: () => Promise<void>;
   selectEntry: (id: string | null) => void;
   toggleRelationType: (type: RelationType) => void;
+  toggleFilterLabel: (label: string) => void;
+  clearFilters: () => void;
   createRelation: (fromId: string, toId: string, type: RelationType, note?: string) => Promise<void>;
   deleteRelation: (fromId: string, toId: string, type: RelationType) => Promise<void>;
   createEntryFromReference: (
@@ -53,6 +56,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   entries: [],
   selectedEntryId: null,
   relationFilter: new Set<RelationType>(['reference', 'derived', 'contradicts', 'supersedes', 'extends']),
+  filterLabels: new Set<string>(),
   isLoading: false,
   error: null,
 
@@ -81,6 +85,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     set({ relationFilter: filter });
   },
+
+  toggleFilterLabel: (label) => {
+    const filter = new Set(get().filterLabels);
+    if (filter.has(label)) {
+      filter.delete(label);
+    } else {
+      filter.add(label);
+    }
+    set({ filterLabels: filter });
+  },
+
+  clearFilters: () => set({ filterLabels: new Set<string>() }),
 
   createRelation: async (fromId, toId, type, note) => {
     try {
