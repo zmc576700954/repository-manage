@@ -3,6 +3,7 @@
   "tagsHeader": "Tags",
   "contentHeader": "Document content",
   "loadingContent": "Loading…",
+  "contentErrorMissing": "Source file does not exist or cannot be read",
   "contentIdle": "Click a document on the left to view its content. This panel shows the full content of that document.",
   "outgoingHeader": "Outgoing relations ({{count}})",
   "outgoingEmpty": "This entry has no outgoing relations yet. Click \"{{action}}\" in the top-right to create the first one.",

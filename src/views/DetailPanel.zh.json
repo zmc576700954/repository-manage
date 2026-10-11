@@ -3,6 +3,7 @@
   "tagsHeader": "标签",
   "contentHeader": "文档内容",
   "loadingContent": "加载中…",
+  "contentErrorMissing": "源文件不存在或无法读取",
   "contentIdle": "点击左侧文档查看其内容。本面板显示这个文档的完整内容。",
   "outgoingHeader": "出向关联 ({{count}})",
   "outgoingEmpty": "本条目还没有指向其它条目的关系。点击右上\"{{action}}\"创建第一条。",

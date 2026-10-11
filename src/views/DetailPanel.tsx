@@ -157,7 +157,7 @@ export function DetailPanel() {
       .then((text) => {
         if (cancelled) return;
         if (text == null) {
-          setContent({ markdown: null, error: '源文件不存在或无法读取' });
+          setContent({ markdown: null, error: t('contentErrorMissing') });
         } else {
           setContent({ markdown: text, error: null });
           setExtLinks(parseMarkdownLinksClient(text));
