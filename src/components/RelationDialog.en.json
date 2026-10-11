@@ -1,0 +1,10 @@
+{
+  "title": "Create Relation",
+  "fromLabel": "From: {{id}}",
+  "toLabel": "To Entry",
+  "toPlaceholder": "Select…",
+  "typeLabel": "Type",
+  "noteLabel": "Note (optional)",
+  "cancel": "Cancel",
+  "create": "Create"
+}

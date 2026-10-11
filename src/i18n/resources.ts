@@ -6,11 +6,13 @@ import SidebarZh from '../components/Sidebar.zh.json';
 import SidebarEn from '../components/Sidebar.en.json';
 import NodeCardZh from '../components/NodeCard.zh.json';
 import NodeCardEn from '../components/NodeCard.en.json';
+import RelationDialogZh from '../components/RelationDialog.zh.json';
+import RelationDialogEn from '../components/RelationDialog.en.json';
 
-export const NS = ['App', 'Settings', 'Sidebar', 'NodeCard'] as const;
+export const NS = ['App', 'Settings', 'Sidebar', 'NodeCard', 'RelationDialog'] as const;
 export type Namespace = (typeof NS)[number];
 
 export const resources = {
-  zh: { App: AppZh, Settings: SettingsZh, Sidebar: SidebarZh, NodeCard: NodeCardZh },
-  en: { App: AppEn, Settings: SettingsEn, Sidebar: SidebarEn, NodeCard: NodeCardEn },
+  zh: { App: AppZh, Settings: SettingsZh, Sidebar: SidebarZh, NodeCard: NodeCardZh, RelationDialog: RelationDialogZh },
+  en: { App: AppEn, Settings: SettingsEn, Sidebar: SidebarEn, NodeCard: NodeCardEn, RelationDialog: RelationDialogEn },
 } as const;

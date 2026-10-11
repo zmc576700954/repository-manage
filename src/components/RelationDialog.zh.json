@@ -1,0 +1,10 @@
+{
+  "title": "创建关联",
+  "fromLabel": "从：{{id}}",
+  "toLabel": "目标条目",
+  "toPlaceholder": "选择…",
+  "typeLabel": "类型",
+  "noteLabel": "备注（可选）",
+  "cancel": "取消",
+  "create": "创建"
+}
