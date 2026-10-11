@@ -6,6 +6,12 @@ export type RelationType =
   | 'extends'
   | 'custom';
 
+export interface KBInfo {
+  id: string;
+  name: string;
+  path: string;
+}
+
 export interface Relation {
   id: string;
   fromId: string;

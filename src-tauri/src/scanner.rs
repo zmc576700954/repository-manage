@@ -27,6 +27,31 @@ pub fn find_entry_dirs(root: &Path) -> Vec<PathBuf> {
     entries
 }
 
+/// 扫描 KB 根目录下所有 .md 文件（不限层级，最多 5 层防过深）。
+/// 用于"每个 .md 文件就是一个 entry"的平铺 KB 格式。
+pub fn find_md_files(root: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    if !root.exists() {
+        return files;
+    }
+    for entry in WalkDir::new(root)
+        .max_depth(5)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        let p = entry.path();
+        if p.is_file()
+            && p.extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.eq_ignore_ascii_case("md"))
+                .unwrap_or(false)
+        {
+            files.push(p.to_path_buf());
+        }
+    }
+    files
+}
+
 /// 提取条目的 ID（相对于 root 的目录名）。
 pub fn entry_id_from_path(root: &Path, entry_path: &Path) -> Option<String> {
     entry_path

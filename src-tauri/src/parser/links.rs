@@ -1,3 +1,90 @@
+/// Markdown 内联链接：[text](url) 形式。
+/// 跳过 image 形式 `![text](url)` 和 reference-style `[text]: url`。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownLink {
+    pub text: String,
+    pub url: String,
+}
+
+pub fn extract_markdown_links(content: &str) -> Vec<MarkdownLink> {
+    let mut out = Vec::new();
+    let bytes = content.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // 跳过 image 形式 ![
+        if i > 0 && bytes[i] == b'[' && bytes[i - 1] == b'!' {
+            i += 1;
+            continue;
+        }
+        if bytes[i] != b'[' {
+            i += 1;
+            continue;
+        }
+        // 找 ']' 结束 text
+        let mut text_end = i + 1;
+        let mut bracket_depth = 1;
+        while text_end < bytes.len() && bracket_depth > 0 {
+            match bytes[text_end] {
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth -= 1,
+                _ => {}
+            }
+            if bracket_depth > 0 {
+                text_end += 1;
+            }
+        }
+        if bracket_depth != 0 || text_end >= bytes.len() {
+            i += 1;
+            continue;
+        }
+        // 期待 '](' 紧跟
+        if text_end + 1 >= bytes.len() || bytes[text_end + 1] != b'(' {
+            i = text_end + 1;
+            continue;
+        }
+        // 找 ')' 结束 url
+        let url_start = text_end + 2;
+        let mut url_end = url_start;
+        let mut paren_depth = 1;
+        while url_end < bytes.len() && paren_depth > 0 {
+            match bytes[url_end] {
+                b'(' => paren_depth += 1,
+                b')' => paren_depth -= 1,
+                _ => {}
+            }
+            if paren_depth > 0 {
+                url_end += 1;
+            }
+        }
+        if paren_depth != 0 || url_end >= bytes.len() {
+            i = text_end + 1;
+            continue;
+        }
+        let text = std::str::from_utf8(&bytes[i + 1..text_end])
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let url = std::str::from_utf8(&bytes[url_start..url_end])
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if !text.is_empty() && !url.is_empty() {
+            out.push(MarkdownLink { text, url });
+        }
+        i = url_end + 1;
+    }
+    out
+}
+
+pub fn is_external_url(url: &str) -> bool {
+    let u = url.trim();
+    u.starts_with("http://")
+        || u.starts_with("https://")
+        || u.starts_with("ftp://")
+        || u.starts_with("mailto:")
+        || u.starts_with("//")
+}
+
 /// 从 Markdown 正文提取 [[path]] 形式的双向链接。
 /// 返回链接目标路径列表（不含路径前缀装饰）。
 pub fn extract_double_bracket_links(content: &str) -> Vec<String> {

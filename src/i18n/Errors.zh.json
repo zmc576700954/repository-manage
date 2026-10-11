@@ -1,0 +1,21 @@
+{
+  "errors": {
+    "path-not-found": "路径不存在: {{path}}",
+    "not-a-directory": "不是目录: {{path}}",
+    "kb-dir-gone": "知识库目录已不存在: {{path}}",
+    "kb-dir-not-directory": "知识库路径不是目录: {{path}}",
+    "no-active-kb": "当前没有激活的知识库",
+    "kb-not-found": "KB '{{kbId}}' 不存在",
+    "entry-not-found": "entry '{{id}}' 不存在",
+    "name-empty": "name 不能为空",
+    "name-invalid": "name 包含非法路径成分: '{{name}}'",
+    "name-has-md-suffix": "name 不要带 .md 后缀",
+    "parent-group-invalid": "group 路径逃逸 KB 根目录: '{{parentGroup}}'",
+    "file-exists": "文件已存在: {{path}}",
+    "save-kbs-failed": "保存 KB 列表失败: {{message}}",
+    "database-op": "{{message}}",
+    "io-op": "{{message}}",
+    "other": "{{message}}",
+    "fallback": "操作失败: {{message}}"
+  }
+}

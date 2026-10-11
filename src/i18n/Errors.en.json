@@ -1,0 +1,21 @@
+{
+  "errors": {
+    "path-not-found": "Path does not exist: {{path}}",
+    "not-a-directory": "Not a directory: {{path}}",
+    "kb-dir-gone": "KB directory no longer exists: {{path}}",
+    "kb-dir-not-directory": "KB path is not a directory: {{path}}",
+    "no-active-kb": "No KB is currently active",
+    "kb-not-found": "KB '{{kbId}}' not found",
+    "entry-not-found": "Entry '{{id}}' not found",
+    "name-empty": "name must not be empty",
+    "name-invalid": "name contains invalid path components: '{{name}}'",
+    "name-has-md-suffix": "name must not end with .md",
+    "parent-group-invalid": "group path escapes KB root: '{{parentGroup}}'",
+    "file-exists": "File already exists: {{path}}",
+    "save-kbs-failed": "Failed to save KB registry: {{message}}",
+    "database-op": "{{message}}",
+    "io-op": "{{message}}",
+    "other": "{{message}}",
+    "fallback": "Operation failed: {{message}}"
+  }
+}

@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use crate::parser::{
     attachments::classify_attachment, attachments::extract_attachments, comments::parse_metadata_comments,
-    links::extract_double_bracket_links, yaml_field::extract_yaml_frontmatter, yaml_field::parse_yaml_fields,
-    yaml_field::YamlFields,
+    links::extract_double_bracket_links, links::extract_markdown_links, links::MarkdownLink,
+    yaml_field::extract_yaml_frontmatter, yaml_field::parse_yaml_fields, yaml_field::YamlFields,
 };
 
 #[derive(Debug, Clone)]
@@ -17,6 +17,7 @@ pub struct RawEntry {
     pub content_path: PathBuf,
     pub attachments: Vec<RawAttachment>,
     pub linked_targets: Vec<String>,
+    pub markdown_links: Vec<MarkdownLink>,
     #[allow(dead_code)]
     pub yaml: Option<YamlFields>,
     pub has_content_md: bool,
@@ -27,6 +28,58 @@ pub struct RawAttachment {
     pub path: String,
     pub caption: Option<String>,
     pub attachment_type: String,
+}
+
+/// 从一个 `.md` 文件直接构建 entry（适用于"每个 .md 一个 entry"的 KB 格式）。
+/// - id: 相对于 kb_root 的路径，转成用 `-` 分隔（不含 .md 扩展名）
+/// - group: 直接父目录相对 kb_root 的完整子路径（用 `/` 拼接），如 `compliance/gdpr`
+///           KB 根直接下的 .md group = None
+/// - title: 文件首个 `# heading`；缺失时退到文件名（去后缀）
+/// - linked_targets: 内容中的 `[[xxx]]` 链接
+/// - markdown_links: 内容中的 `[text](url)` 链接（内/外都保留）
+pub fn read_md_file(file: &Path, kb_root: &Path) -> RawEntry {
+    let rel = file.strip_prefix(kb_root).unwrap_or(file);
+
+    let group = rel
+        .parent()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .filter(|s| !s.is_empty() && s != ".");
+
+    let file_stem = file
+        .file_stem()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let content = std::fs::read_to_string(file).unwrap_or_default();
+
+    let title = content
+        .lines()
+        .find(|l| l.trim_start().starts_with("# "))
+        .map(|l| l.trim_start_matches('#').trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(file_stem.clone());
+
+    let linked_targets = extract_double_bracket_links(&content);
+    let markdown_links = extract_markdown_links(&content);
+
+    let id = rel
+        .with_extension("")
+        .to_string_lossy()
+        .replace(['\\', '/'], "-");
+
+    RawEntry {
+        id,
+        title,
+        tags: vec![],
+        group,
+        path: file.to_path_buf(),
+        content_path: file.to_path_buf(),
+        attachments: vec![],
+        linked_targets,
+        markdown_links,
+        yaml: None,
+        has_content_md: true,
+    }
 }
 
 /// 从 entry 目录读取并解析完整 Entry 数据。
@@ -50,6 +103,7 @@ pub fn read_entry(entry_dir: &Path) -> RawEntry {
             content_path,
             attachments: vec![],
             linked_targets: vec![],
+            markdown_links: vec![],
             yaml: None,
             has_content_md: false,
         };
@@ -78,6 +132,7 @@ pub fn read_entry(entry_dir: &Path) -> RawEntry {
         .collect();
 
     let linked_targets = extract_double_bracket_links(&content);
+    let markdown_links = extract_markdown_links(&content);
 
     let yaml = extract_yaml_frontmatter(&content)
         .map(|yaml| {
@@ -98,6 +153,7 @@ pub fn read_entry(entry_dir: &Path) -> RawEntry {
         content_path,
         attachments,
         linked_targets,
+        markdown_links,
         yaml,
         has_content_md: true,
     }

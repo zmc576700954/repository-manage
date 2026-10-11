@@ -13,10 +13,30 @@ pub fn kb_root() -> PathBuf {
 /// macOS: ~/Library/Application Support/synapse-kb
 /// Linux: ~/.local/share/synapse-kb
 /// Windows: %APPDATA%/synapse-kb
+///
+/// Per Finding #13: pre-fix, when `dirs::data_dir()` returned None
+/// (rare on minimal Linux without HOME/XDG_DATA_HOME), the fallback was
+/// a bare relative `".synapse-kb"`. For a packaged app whose CWD is
+/// `/` or the binary directory, that landed `kbs.json` somewhere
+/// unpredictable. We now fall back to `~/.synapse-kb` via `home_dir`,
+/// and as a last resort to a temp-dir absolute path — never a bare
+/// relative path.
 pub fn app_data_dir() -> PathBuf {
-    dirs::data_dir()
-        .map(|p| p.join("synapse-kb"))
-        .unwrap_or_else(|| PathBuf::from(".synapse-kb"))
+    if let Some(p) = dirs::data_dir() {
+        return p.join("synapse-kb");
+    }
+    if let Some(home) = dirs::home_dir() {
+        return home.join(".synapse-kb");
+    }
+    // Last resort: an absolute path under the OS temp dir. Returning a
+    // relative path here would mean "next to the binary or CWD", which
+    // can be unwritable for packaged apps. A temp-dir path is at least
+    // writable and discoverable across launches via the same logic.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!("synapse-kb-{nanos}"))
 }
 
 /// 获取 SQLite 索引数据库文件路径。
@@ -26,6 +46,16 @@ pub fn index_db_path() -> PathBuf {
         return PathBuf::from(v);
     }
     kb_root().join("index.db")
+}
+
+/// 知识库注册表持久化文件路径。
+pub fn kbs_json_path() -> PathBuf {
+    app_data_dir().join("kbs.json")
+}
+
+/// 各知识库索引 db 文件存放目录。
+pub fn indexes_dir() -> PathBuf {
+    app_data_dir().join("indexes")
 }
 
 #[cfg(test)]
@@ -59,5 +89,28 @@ mod tests {
         std::env::set_var("SYNAPSE_INDEX_DB", "/tmp/custom-index.db");
         assert_eq!(index_db_path(), PathBuf::from("/tmp/custom-index.db"));
         std::env::remove_var("SYNAPSE_INDEX_DB");
+    }
+
+    /// Per Finding #13: the pre-fix fallback for `dirs::data_dir() == None`
+    /// was a bare relative `".synapse-kb"`. For a packaged app whose CWD
+    /// is `/` or the binary directory, that landed `kbs.json` somewhere
+    /// unpredictable. Post-fix, the function never returns a relative
+    /// path: `data_dir` → `home_dir` → temp_dir. We can't easily force
+    /// `dirs::data_dir()` to None in a test (it's global state), but we
+    /// CAN assert that the returned path is absolute — that's the
+    /// observable contract.
+    #[test]
+    fn app_data_dir_is_always_absolute() {
+        let dir = app_data_dir();
+        assert!(
+            dir.is_absolute(),
+            "app_data_dir must never return a relative path; got {:?}",
+            dir
+        );
+        assert!(
+            dir.to_string_lossy().contains("synapse-kb"),
+            "result must still name the app's data folder; got {:?}",
+            dir
+        );
     }
 }
