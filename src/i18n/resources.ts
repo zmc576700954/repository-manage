@@ -12,11 +12,13 @@ import MapViewZh from '../views/MapView.zh.json';
 import MapViewEn from '../views/MapView.en.json';
 import EntryDialogZh from '../components/EntryDialog.zh.json';
 import EntryDialogEn from '../components/EntryDialog.en.json';
+import DetailPanelZh from '../views/DetailPanel.zh.json';
+import DetailPanelEn from '../views/DetailPanel.en.json';
 
-export const NS = ['App', 'Settings', 'Sidebar', 'NodeCard', 'RelationDialog', 'MapView', 'EntryDialog'] as const;
+export const NS = ['App', 'Settings', 'Sidebar', 'NodeCard', 'RelationDialog', 'MapView', 'EntryDialog', 'DetailPanel'] as const;
 export type Namespace = (typeof NS)[number];
 
 export const resources = {
-  zh: { App: AppZh, Settings: SettingsZh, Sidebar: SidebarZh, NodeCard: NodeCardZh, RelationDialog: RelationDialogZh, MapView: MapViewZh, EntryDialog: EntryDialogZh },
-  en: { App: AppEn, Settings: SettingsEn, Sidebar: SidebarEn, NodeCard: NodeCardEn, RelationDialog: RelationDialogEn, MapView: MapViewEn, EntryDialog: EntryDialogEn },
+  zh: { App: AppZh, Settings: SettingsZh, Sidebar: SidebarZh, NodeCard: NodeCardZh, RelationDialog: RelationDialogZh, MapView: MapViewZh, EntryDialog: EntryDialogZh, DetailPanel: DetailPanelZh },
+  en: { App: AppEn, Settings: SettingsEn, Sidebar: SidebarEn, NodeCard: NodeCardEn, RelationDialog: RelationDialogEn, MapView: MapViewEn, EntryDialog: EntryDialogEn, DetailPanel: DetailPanelEn },
 } as const;
