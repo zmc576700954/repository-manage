@@ -18,3 +18,6 @@ npm-debug.log*
 # Local build artifacts (built with Docker)
 dist-out/
 synapse-kb-*.tar.gz
+
+# Superpowers brainstorm session (visual companion artifacts)
+.superpowers/
