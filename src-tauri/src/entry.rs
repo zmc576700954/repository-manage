@@ -21,6 +21,14 @@ pub struct RawEntry {
     #[allow(dead_code)]
     pub yaml: Option<YamlFields>,
     pub has_content_md: bool,
+    pub labels: Vec<String>,
+    pub status: Option<String>,
+    pub aliases: Vec<String>,
+    pub source: Option<String>,
+    pub created: Option<String>,
+    pub updated: Option<String>,
+    pub ignored_rules: Vec<String>,
+    pub validation: Vec<crate::validator::ValidationIssue>,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +87,14 @@ pub fn read_md_file(file: &Path, kb_root: &Path) -> RawEntry {
         markdown_links,
         yaml: None,
         has_content_md: true,
+        labels: vec![],
+        status: None,
+        aliases: vec![],
+        source: None,
+        created: None,
+        updated: None,
+        ignored_rules: vec![],
+        validation: vec![],
     }
 }
 
@@ -106,6 +122,14 @@ pub fn read_entry(entry_dir: &Path) -> RawEntry {
             markdown_links: vec![],
             yaml: None,
             has_content_md: false,
+            labels: vec![],
+            status: None,
+            aliases: vec![],
+            source: None,
+            created: None,
+            updated: None,
+            ignored_rules: vec![],
+            validation: vec![],
         };
     }
 
@@ -144,6 +168,23 @@ pub fn read_entry(entry_dir: &Path) -> RawEntry {
         })
         .and_then(|yaml| parse_yaml_fields(&yaml).ok());
 
+    let labels = metadata
+        .get("labels")
+        .map(|s| crate::parser::comments::extract_labels(s))
+        .unwrap_or_default();
+    let status = metadata.get("status").cloned();
+    let aliases = metadata
+        .get("aliases")
+        .map(|s| crate::parser::comments::extract_labels(s))
+        .unwrap_or_default();
+    let source = metadata.get("source").cloned();
+    let created = metadata.get("created").cloned();
+    let updated = metadata.get("updated").cloned();
+    let ignored_rules = metadata
+        .get("ignore")
+        .map(|s| crate::parser::comments::extract_labels(s))
+        .unwrap_or_default();
+
     RawEntry {
         id,
         title,
@@ -156,6 +197,14 @@ pub fn read_entry(entry_dir: &Path) -> RawEntry {
         markdown_links,
         yaml,
         has_content_md: true,
+        labels,
+        status,
+        aliases,
+        source,
+        created,
+        updated,
+        ignored_rules,
+        validation: vec![],
     }
 }
 
@@ -308,5 +357,53 @@ color: : invalid
 
         let entry = read_entry(&entry_dir);
         assert_eq!(entry.linked_targets, vec!["other-a", "other-b"]);
+    }
+
+    #[test]
+    fn reads_labels_and_status() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let entry_dir = root.join("with-extras");
+        fs::create_dir(&entry_dir).unwrap();
+        let content = r#"<!-- @synapse-id: with-extras -->
+<!-- @synapse-title: With Extras -->
+<!-- @synapse-status: draft -->
+<!-- @synapse-labels: important, wip -->
+<!-- @synapse-aliases: 旧名 -->
+<!-- @synapse-source: https://example.com -->
+<!-- @synapse-created: 2026-01-01 -->
+<!-- @synapse-updated: 2026-10-12 -->
+<!-- @synapse-ignore: W5 -->
+
+body
+"#;
+        fs::write(entry_dir.join("content.md"), content).unwrap();
+
+        let entry = read_entry(&entry_dir);
+        assert_eq!(entry.labels, vec!["important", "wip"]);
+        assert_eq!(entry.status, Some("draft".to_string()));
+        assert_eq!(entry.aliases, vec!["旧名"]);
+        assert_eq!(entry.source, Some("https://example.com".to_string()));
+        assert_eq!(entry.created, Some("2026-01-01".to_string()));
+        assert_eq!(entry.updated, Some("2026-10-12".to_string()));
+        assert_eq!(entry.ignored_rules, vec!["W5"]);
+    }
+
+    #[test]
+    fn reads_group_field_silently_ignored() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let entry_dir = root.join("legacy");
+        fs::create_dir(&entry_dir).unwrap();
+        let content = r#"<!-- @synapse-id: legacy -->
+<!-- @synapse-group: foo -->
+
+body
+"#;
+        fs::write(entry_dir.join("content.md"), content).unwrap();
+
+        let entry = read_entry(&entry_dir);
+        // @synapse-group 应被静默忽略，labels 保持空
+        assert!(entry.labels.is_empty());
     }
 }

@@ -587,6 +587,14 @@ mod tests {
             markdown_links: vec![],
             yaml: None,
             has_content_md: true,
+            labels: vec![],
+            status: None,
+            aliases: vec![],
+            source: None,
+            created: None,
+            updated: None,
+            ignored_rules: vec![],
+            validation: vec![],
         }
     }
 
