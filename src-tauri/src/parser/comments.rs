@@ -133,4 +133,81 @@ Some text with @synapse-id: ignored
         assert_eq!(metadata.len(), 1);
         assert_eq!(metadata.get("id").map(|s| s.as_str()), Some("real"));
     }
+
+    #[test]
+    fn parses_labels_csv() {
+        let content = r#"<!-- @synapse-id: foo -->
+<!-- @synapse-labels: important, wip, deprecated -->"#;
+        let metadata = parse_metadata_comments(content);
+        assert_eq!(
+            metadata.get("labels").map(|s| s.as_str()),
+            Some("important, wip, deprecated")
+        );
+    }
+
+    #[test]
+    fn parses_status_field() {
+        let content = r#"<!-- @synapse-id: foo -->
+<!-- @synapse-status: draft -->"#;
+        let metadata = parse_metadata_comments(content);
+        assert_eq!(
+            metadata.get("status").map(|s| s.as_str()),
+            Some("draft")
+        );
+    }
+
+    #[test]
+    fn parses_aliases_csv() {
+        let content = r#"<!-- @synapse-id: foo -->
+<!-- @synapse-aliases: 旧名, 别名2 -->"#;
+        let metadata = parse_metadata_comments(content);
+        assert_eq!(
+            metadata.get("aliases").map(|s| s.as_str()),
+            Some("旧名, 别名2")
+        );
+    }
+
+    #[test]
+    fn parses_source_field() {
+        let content = r#"<!-- @synapse-id: foo -->
+<!-- @synapse-source: https://example.com -->"#;
+        let metadata = parse_metadata_comments(content);
+        assert_eq!(
+            metadata.get("source").map(|s| s.as_str()),
+            Some("https://example.com")
+        );
+    }
+
+    #[test]
+    fn parses_created_date() {
+        let content = r#"<!-- @synapse-id: foo -->
+<!-- @synapse-created: 2026-10-01 -->"#;
+        let metadata = parse_metadata_comments(content);
+        assert_eq!(
+            metadata.get("created").map(|s| s.as_str()),
+            Some("2026-10-01")
+        );
+    }
+
+    #[test]
+    fn parses_updated_date() {
+        let content = r#"<!-- @synapse-id: foo -->
+<!-- @synapse-updated: 2026-10-12 -->"#;
+        let metadata = parse_metadata_comments(content);
+        assert_eq!(
+            metadata.get("updated").map(|s| s.as_str()),
+            Some("2026-10-12")
+        );
+    }
+
+    #[test]
+    fn parses_ignore_field() {
+        let content = r#"<!-- @synapse-id: foo -->
+<!-- @synapse-ignore: W5, W7 -->"#;
+        let metadata = parse_metadata_comments(content);
+        assert_eq!(
+            metadata.get("ignore").map(|s| s.as_str()),
+            Some("W5, W7")
+        );
+    }
 }
