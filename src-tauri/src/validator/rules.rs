@@ -74,13 +74,19 @@ pub fn check_id_matches_path(
     kb_root: &Path,
     _all_ids: &HashSet<String>,
 ) -> Vec<ValidationIssue> {
-    let rel = entry.path.strip_prefix(kb_root).unwrap_or(&entry.path);
+    let Ok(rel) = entry.path.strip_prefix(kb_root) else {
+        return vec![];
+    };
+    let Some(file_name) = entry.path.file_name() else {
+        return vec![];
+    };
+    let file_name_str = file_name.to_string_lossy();
     let parent = rel.parent().map(|p| p.to_string_lossy().replace('\\', "/"));
     let id_from_path = match parent.as_deref() {
         Some(p) if !p.is_empty() && p != "." => {
-            format!("{}-{}", p.replace('/', "-"), entry.path.file_name().unwrap().to_string_lossy())
+            format!("{}-{}", p.replace('/', "-"), file_name_str)
         }
-        _ => entry.path.file_name().unwrap().to_string_lossy().to_string(),
+        _ => file_name_str.to_string(),
     };
     if entry.id != id_from_path && !entry.id.is_empty() {
         return vec![ValidationIssue {
@@ -103,7 +109,9 @@ pub fn check_directory_depth(
     kb_root: &Path,
     _all_ids: &HashSet<String>,
 ) -> Vec<ValidationIssue> {
-    let rel = entry.path.strip_prefix(kb_root).unwrap_or(&entry.path);
+    let Ok(rel) = entry.path.strip_prefix(kb_root) else {
+        return vec![];
+    };
     let depth = rel.components().count();
     if depth > 4 {
         // /kb/{d}/{sd}/{entry} = 4 components; > 4 means > 3 levels
@@ -124,9 +132,11 @@ pub fn check_root_md_files(
     kb_root: &Path,
     _all_ids: &HashSet<String>,
 ) -> Vec<ValidationIssue> {
-    let rel = entry.path.strip_prefix(kb_root).unwrap_or(&entry.path);
+    let Ok(rel) = entry.path.strip_prefix(kb_root) else {
+        return vec![];
+    };
     let depth = rel.components().count();
-    if depth == 2 && entry.path.extension().map_or(false, |e| e == "md") {
+    if depth == 1 && entry.path.extension().map_or(false, |e| e == "md") {
         return vec![ValidationIssue {
             entry_id: entry.id.clone(),
             rule_id: "E6".into(),
@@ -141,26 +151,32 @@ pub fn check_root_md_files(
 
 pub fn check_reserved_subdir_names(
     entry: &RawEntry,
-    _kb_root: &Path,
+    kb_root: &Path,
     _all_ids: &HashSet<String>,
 ) -> Vec<ValidationIssue> {
-    // 简化版：仅检查 entry.path 的父级是否直接是 attachments/notes/content
-    let parent_name = entry
-        .path
-        .parent()
-        .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy().to_string());
-    match parent_name.as_deref() {
-        Some("attachments") | Some("notes") | Some("content") => vec![ValidationIssue {
-            entry_id: entry.id.clone(),
-            rule_id: "E7".into(),
-            severity: Severity::Error,
-            message: "Reserved subdirectory used as entry location".into(),
-            file_line: None,
-            ignored: false,
-        }],
-        _ => vec![],
+    let Ok(rel) = entry.path.strip_prefix(kb_root) else {
+        return vec![];
+    };
+    let reserved = ["attachments", "notes", "content"];
+    for ancestor in rel.ancestors().skip(1) {
+        // skip the file itself
+        if let Some(name) = ancestor.file_name() {
+            if reserved.contains(&name.to_string_lossy().as_ref()) {
+                return vec![ValidationIssue {
+                    entry_id: entry.id.clone(),
+                    rule_id: "E7".into(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "Entry path contains reserved subdirectory \"{}\"",
+                        name.to_string_lossy()
+                    ),
+                    file_line: None,
+                    ignored: false,
+                }];
+            }
+        }
     }
+    vec![]
 }
 
 pub fn check_system_labels_written_by_user(
@@ -365,5 +381,65 @@ mod tests {
         let issues =
             check_system_labels_written_by_user(&e, std::path::Path::new("/kb"), &Default::default());
         assert!(issues.iter().any(|i| i.rule_id == "E9"));
+    }
+
+    #[test]
+    fn e2_id_mismatch_triggers() {
+        let mut e = make_entry("foo", "Foo", vec!["type:concept".into()]);
+        e.id = "wrong-id".into();
+        let issues = check_id_matches_path(&e, std::path::Path::new("/kb"), &Default::default());
+        assert!(issues.iter().any(|i| i.rule_id == "E2"));
+    }
+
+    #[test]
+    fn e5_deep_path_triggers() {
+        let mut e = make_entry("foo", "Foo", vec!["type:concept".into()]);
+        // depth > 3: /kb/a/b/c/d/foo/content.md = 6 components
+        e.path = PathBuf::from("/kb/a/b/c/d/foo/content.md");
+        e.content_path = e.path.clone();
+        let issues = check_directory_depth(&e, std::path::Path::new("/kb"), &Default::default());
+        assert!(issues.iter().any(|i| i.rule_id == "E5"));
+    }
+
+    #[test]
+    fn e6_root_md_triggers() {
+        let mut e = make_entry("foo", "Foo", vec!["type:concept".into()]);
+        e.path = PathBuf::from("/kb/foo.md");  // depth = 2 (kb + foo.md)
+        e.content_path = e.path.clone();
+        let issues = check_root_md_files(&e, std::path::Path::new("/kb"), &Default::default());
+        assert!(issues.iter().any(|i| i.rule_id == "E6"));
+    }
+
+    #[test]
+    fn e7_reserved_subdir_triggers() {
+        let mut e = make_entry("foo", "Foo", vec!["type:concept".into()]);
+        e.path = PathBuf::from("/kb/attachments/foo/content.md");
+        e.content_path = e.path.clone();
+        let issues = check_reserved_subdir_names(&e, std::path::Path::new("/kb"), &Default::default());
+        assert!(issues.iter().any(|i| i.rule_id == "E7"));
+    }
+
+    #[test]
+    fn w2_too_many_tags_triggers() {
+        let e = make_entry("foo", "Foo", (0..20).map(|i| format!("topic:i{}", i)).collect());
+        let issues = check_tag_count(&e, std::path::Path::new("/kb"), &Default::default());
+        assert!(issues.iter().any(|i| i.rule_id == "W2"));
+    }
+
+    #[test]
+    fn w3_bad_chars_trigger() {
+        let e = make_entry("foo", "Foo", vec!["type:Concept".into()]);  // capital C
+        let issues = check_tag_chars(&e, std::path::Path::new("/kb"), &Default::default());
+        assert!(issues.iter().any(|i| i.rule_id == "W3"));
+    }
+
+    #[test]
+    fn w4_broken_link_triggers() {
+        let mut e = make_entry("foo", "Foo", vec!["type:concept".into()]);
+        e.linked_targets = vec!["nonexistent".into()];
+        let mut all_ids = HashSet::new();
+        all_ids.insert("foo".to_string());
+        let issues = check_broken_link_targets(&e, std::path::Path::new("/kb"), &all_ids);
+        assert!(issues.iter().any(|i| i.rule_id == "W4"));
     }
 }
