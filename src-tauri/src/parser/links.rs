@@ -121,6 +121,54 @@ pub fn extract_double_bracket_links(content: &str) -> Vec<String> {
     links
 }
 
+/// 显式关系声明（行级 @relation: type [[id]]）
+#[derive(Debug, Clone, PartialEq)]
+pub struct Relation {
+    pub relation_type: String,
+    pub target: String,
+}
+
+/// 从 markdown 内容中提取 @relation: type [[id]] 行级声明。
+/// 仅识别 5 种默认关系类型。
+pub fn extract_relations(content: &str) -> Vec<Relation> {
+    const VALID_RELATION_TYPES: &[&str] = &[
+        "reference",
+        "derived",
+        "contradicts",
+        "supersedes",
+        "extends",
+    ];
+
+    let mut relations = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        let Some(rest) = line.strip_prefix("@relation:") else {
+            continue;
+        };
+        let rest = rest.trim();
+        let Some((rtype, target_part)) = rest.split_once(' ') else {
+            continue;
+        };
+        let rtype = rtype.trim();
+        let target_part = target_part.trim();
+        let target = match target_part
+            .strip_prefix("[[")
+            .and_then(|s| s.strip_suffix("]]"))
+        {
+            Some(t) => t.to_string(),
+            None => continue,
+        };
+        if rtype.is_empty() || !VALID_RELATION_TYPES.contains(&rtype) {
+            continue;
+        }
+        relations.push(Relation {
+            relation_type: rtype.to_string(),
+            target,
+        });
+    }
+    relations
+}
+
 /// 移除 #block-id 后缀
 fn strip_block_ref(target: &str) -> &str {
     if let Some(idx) = target.find('#') {
@@ -203,5 +251,45 @@ mod tests {
         let content = "Empty [[]] and [[real]]";
         let links = extract_double_bracket_links(content);
         assert_eq!(links, vec!["real"]);
+    }
+
+    #[test]
+    fn extracts_relation_declarations() {
+        let content = r#"参考文档。
+
+@relation: derived [[source-entry]]
+@relation: contradicts [[old-entry]]
+
+正文。
+"#;
+        let rels = extract_relations(content);
+        assert_eq!(rels.len(), 2);
+        assert_eq!(rels[0].relation_type, "derived");
+        assert_eq!(rels[0].target, "source-entry");
+        assert_eq!(rels[1].relation_type, "contradicts");
+        assert_eq!(rels[1].target, "old-entry");
+    }
+
+    #[test]
+    fn ignores_non_relation_declarations() {
+        let content = "普通文本 @relation: derived [[x]] 但不在行首\n";
+        let rels = extract_relations(content);
+        assert!(rels.is_empty());
+    }
+
+    #[test]
+    fn handles_invalid_declarations() {
+        let content = "@relation: unknown [[x]]\n@relation: derived yyy\n";
+        let rels = extract_relations(content);
+        // unknown 类型不识别；无 [[]] 的视为无效
+        assert_eq!(rels.len(), 0);
+    }
+
+    #[test]
+    fn extracts_relation_with_block_id() {
+        let content = "@relation: extends [[entry-x#section-1]]\n";
+        let rels = extract_relations(content);
+        assert_eq!(rels.len(), 1);
+        assert_eq!(rels[0].target, "entry-x#section-1");
     }
 }
