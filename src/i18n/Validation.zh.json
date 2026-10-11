@@ -1,0 +1,17 @@
+{
+  "severity": { "error": "错误", "warning": "警告", "info": "提示" },
+  "rule": {
+    "E1": { "title": "缺少 ID", "message": "@synapse-id 不能为空" },
+    "E2": { "title": "ID 与路径不一致", "message": "@synapse-id \"{{id}}\" 应等于 \"{{expected}}\"" },
+    "E3": { "title": "缺少标题", "message": "@synapse-title 不能为空" },
+    "E4": { "title": "缺少类型标签", "message": "@synapse-tags 至少需要一个 type: 前缀" },
+    "W4": { "title": "悬空链接", "message": "[[{{target}}]] 目标不存在" },
+    "W5": { "title": "孤立候选", "message": "entry 无任何 link 边" }
+  },
+  "systemLabel": {
+    "recently-modified": "最近修改",
+    "orphan": "孤立条目",
+    "stale": "长期未更新",
+    "broken-link": "断链"
+  }
+}

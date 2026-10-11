@@ -1,0 +1,17 @@
+{
+  "severity": { "error": "Error", "warning": "Warning", "info": "Info" },
+  "rule": {
+    "E1": { "title": "Missing ID", "message": "@synapse-id cannot be empty" },
+    "E2": { "title": "ID mismatch", "message": "@synapse-id \"{{id}}\" should equal \"{{expected}}\"" },
+    "E3": { "title": "Missing title", "message": "@synapse-title cannot be empty" },
+    "E4": { "title": "Missing type tag", "message": "@synapse-tags must have at least one type: prefix" },
+    "W4": { "title": "Broken link", "message": "[[{{target}}]] target does not exist" },
+    "W5": { "title": "Orphan candidate", "message": "Entry has no links" }
+  },
+  "systemLabel": {
+    "recently-modified": "Recently Modified",
+    "orphan": "Orphan",
+    "stale": "Stale",
+    "broken-link": "Broken Link"
+  }
+}

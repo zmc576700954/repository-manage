@@ -18,13 +18,15 @@ import DetailPanelZh from '../views/DetailPanel.zh.json';
 import DetailPanelEn from '../views/DetailPanel.en.json';
 import ValidationPanelZh from '../components/ValidationPanel.zh.json';
 import ValidationPanelEn from '../components/ValidationPanel.en.json';
+import ValidationZh from './Validation.zh.json';
+import ValidationEn from './Validation.en.json';
 import ErrorBarZh from '../components/ErrorBar.zh.json';
 import ErrorBarEn from '../components/ErrorBar.en.json';
 
-export const NS = ['App', 'Errors', 'Settings', 'Sidebar', 'NodeCard', 'RelationDialog', 'MapView', 'EntryDialog', 'DetailPanel', 'ValidationPanel', 'ErrorBar'] as const;
+export const NS = ['App', 'Errors', 'Settings', 'Sidebar', 'NodeCard', 'RelationDialog', 'MapView', 'EntryDialog', 'DetailPanel', 'ValidationPanel', 'Validation', 'ErrorBar'] as const;
 export type Namespace = (typeof NS)[number];
 
 export const resources = {
-  zh: { App: AppZh, Errors: ErrorsZh, Settings: SettingsZh, Sidebar: SidebarZh, NodeCard: NodeCardZh, RelationDialog: RelationDialogZh, MapView: MapViewZh, EntryDialog: EntryDialogZh, DetailPanel: DetailPanelZh, ValidationPanel: ValidationPanelZh, ErrorBar: ErrorBarZh },
-  en: { App: AppEn, Errors: ErrorsEn, Settings: SettingsEn, Sidebar: SidebarEn, NodeCard: NodeCardEn, RelationDialog: RelationDialogEn, MapView: MapViewEn, EntryDialog: EntryDialogEn, DetailPanel: DetailPanelEn, ValidationPanel: ValidationPanelEn, ErrorBar: ErrorBarEn },
+  zh: { App: AppZh, Errors: ErrorsZh, Settings: SettingsZh, Sidebar: SidebarZh, NodeCard: NodeCardZh, RelationDialog: RelationDialogZh, MapView: MapViewZh, EntryDialog: EntryDialogZh, DetailPanel: DetailPanelZh, ValidationPanel: ValidationPanelZh, Validation: ValidationZh, ErrorBar: ErrorBarZh },
+  en: { App: AppEn, Errors: ErrorsEn, Settings: SettingsEn, Sidebar: SidebarEn, NodeCard: NodeCardEn, RelationDialog: RelationDialogEn, MapView: MapViewEn, EntryDialog: EntryDialogEn, DetailPanel: DetailPanelEn, ValidationPanel: ValidationPanelEn, Validation: ValidationEn, ErrorBar: ErrorBarEn },
 } as const;
