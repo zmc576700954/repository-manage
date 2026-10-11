@@ -1,0 +1,9 @@
+{
+  "errors": "错误",
+  "warnings": "警告",
+  "info": "提示",
+  "rescan": "重新校验",
+  "exportJson": "导出 JSON",
+  "jumpTo": "跳转到 entry",
+  "noIssues": "无问题"
+}

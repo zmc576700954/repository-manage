@@ -1,0 +1,9 @@
+{
+  "errors": "Errors",
+  "warnings": "Warnings",
+  "info": "Info",
+  "rescan": "Rescan",
+  "exportJson": "Export JSON",
+  "jumpTo": "Jump to entry",
+  "noIssues": "No issues"
+}
