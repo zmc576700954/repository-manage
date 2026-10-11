@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Sidebar } from '@/components/Sidebar';
 import { RightPanelStack } from '@/components/RightPanelStack';
+import { ErrorBar } from '@/components/ErrorBar';
 import { MapView } from '@/views/MapView';
 import { DetailPanel } from '@/views/DetailPanel';
 import { Settings } from '@/views/Settings';
@@ -15,6 +16,7 @@ export default function App() {
   const isLoading = useAppStore((s) => s.isLoading);
   const selectedEntryId = useAppStore((s) => s.selectedEntryId);
   const activeKbId = useAppStore((s) => s.activeKbId);
+  const entries = useAppStore((s) => s.entries);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -22,10 +24,14 @@ export default function App() {
     refreshKbs().then(() => loadEntries());
   }, [refreshKbs, loadEntries]);
 
+  const errorCount = entries.reduce((sum, e) => sum + (e.errorCount ?? 0), 0);
+  const warningCount = entries.reduce((sum, e) => sum + (e.warningCount ?? 0), 0);
+
   return (
     <div className="flex h-screen w-screen bg-gray-50 text-gray-900">
       <Sidebar onOpenSettings={() => setSettingsOpen(true)} />
       <main className="relative flex-1">
+        <ErrorBar errorCount={errorCount} warningCount={warningCount} />
         <button
           onClick={() => setSettingsOpen(true)}
           className="absolute right-4 top-4 z-10 rounded-md bg-white px-3 py-1.5 text-sm shadow-sm hover:bg-gray-50"
