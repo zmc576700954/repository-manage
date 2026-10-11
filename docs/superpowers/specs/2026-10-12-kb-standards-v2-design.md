@@ -49,6 +49,7 @@ kb-root/
 - 任何条目必须在 1-3 层目录下；3 层以下禁止（不放 `level4/`）
 - 路径分隔符强制 `/`；`\` 视为违规
 - 命名完全放开（Unicode 允许），用户能识别即可；命名规范的执行由用户决定
+- **`_inbox/` 例外**：未归类的条目可放在 KB 根下的 `_inbox/{entry-id}/`（下划线前缀）；不受 1-3 层目录约束，但仅一层
 
 ### ID 命名
 
@@ -513,6 +514,12 @@ pub fn get_system_labels(kb_root: PathBuf) -> Result<Vec<SystemLabel>, AppError>
 
 #[tauri::command]
 pub fn run_validation(kb_root: PathBuf) -> Result<ValidationReport, AppError>;
+
+#[tauri::command]
+pub fn get_kb_config(kb_root: PathBuf) -> Result<KbConfig, AppError>;
+
+#[tauri::command]
+pub fn update_kb_config(kb_root: PathBuf, config: KbConfig) -> Result<(), AppError>;
 ```
 
 ### 6.6 文件改动清单
@@ -527,7 +534,7 @@ pub fn run_validation(kb_root: PathBuf) -> Result<ValidationReport, AppError>;
 | `src-tauri/src/validator/system_labels.rs` | **新建** |
 | `src-tauri/src/validator/rules.rs` | **新建** |
 | `src-tauri/src/index.rs` | SQLite schema 加 `labels` 列 |
-| `src-tauri/src/commands.rs` | 新增 4 个 `#[tauri::command]` |
+| `src-tauri/src/commands.rs` | 新增 6 个 `#[tauri::command]`（§6.5） |
 | `src-tauri/src/lib.rs` | 注册新命令 |
 
 ### 6.7 Rust 单元测试覆盖
@@ -1220,9 +1227,9 @@ let _guard = kb_lock.lock().await;
 
 ## §15 验收清单
 
-### 15.1 Rust 单元测试（19 个）
+### 15.1 Rust 单元测试
 
-见 §6.7 列表。
+见 §6.7 列表（11 个核心测试）。实施时可按需拆分 helper 与边界用例，但最低覆盖范围以此为准。
 
 ### 15.2 手工验收清单（32 条）
 
@@ -1331,7 +1338,7 @@ let _guard = kb_lock.lock().await;
 
 **全部以下条件满足，spec 实现视为完成**：
 
-- [ ] §15.1 全部 19 个 Rust 单元测试通过
+- [ ] §15.1 §6.7 全部 Rust 单元测试通过
 - [ ] §15.2 全部 32 条手工验证通过
 - [ ] §15.3 全部 8 条边界场景通过
 - [ ] §15.4 至少 macOS + Linux 通过
@@ -1365,7 +1372,7 @@ let _guard = kb_lock.lock().await;
 - 扩展 `parse_metadata_comments` 支持新键
 - 新增 `extract_labels` / `extract_relations`
 - `YamlFields` 加 `icon` / `preview` / `hidden`
-- `RawEntry` 结构扩展（11 字段）
+- `RawEntry` 结构扩展（8 字段）
 - SQLite schema 迁移（新增 `labels` 列）
 - 单元测试 §15.1 解析器部分
 
@@ -1392,7 +1399,7 @@ let _guard = kb_lock.lock().await;
 ### 16.6 M4：Tauri 集成
 
 - `AppState` 增加 `validation_report`
-- 新增 4 个 `#[tauri::command]`（§9.7）
+- 新增 6 个 `#[tauri::command]`（§6.5）
 - `lib.rs` 启动钩子跑 H1 校验
 - `kb_registry.set_active` 后重跑校验
 - `KbSummary` 缓存
