@@ -2,6 +2,7 @@ import React from 'react';
 import { usePanelStore, PanelType } from '@/store/panelStore';
 import { RightPanel } from './RightPanel';
 import { ValidationPanel } from './ValidationPanel';
+import { Settings } from '@/views/Settings';
 
 const panelTitles: Record<PanelType, string> = {
   validation: 'Validation',
@@ -26,7 +27,7 @@ export const RightPanelStack: React.FC = () => {
           onClose={() => close(panelType)}
         >
           {panelType === 'validation' && <ValidationPanel />}
-          {panelType === 'settings' && <div>Settings placeholder</div>}
+          {panelType === 'settings' && <Settings />}
           {panelType === 'filter' && <div>Filter placeholder</div>}
         </RightPanel>
       ))}

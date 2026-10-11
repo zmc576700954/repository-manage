@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Sidebar } from '@/components/Sidebar';
 import { RightPanelStack } from '@/components/RightPanelStack';
 import { ErrorBar } from '@/components/ErrorBar';
 import { MapView } from '@/views/MapView';
 import { DetailPanel } from '@/views/DetailPanel';
-import { Settings } from '@/views/Settings';
 import { useAppStore } from '@/store/useAppStore';
+import { usePanelStore } from '@/store/panelStore';
 
 export default function App() {
   const { t } = useTranslation('App');
@@ -17,8 +17,7 @@ export default function App() {
   const selectedEntryId = useAppStore((s) => s.selectedEntryId);
   const activeKbId = useAppStore((s) => s.activeKbId);
   const entries = useAppStore((s) => s.entries);
-
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { open } = usePanelStore();
 
   useEffect(() => {
     refreshKbs().then(() => loadEntries());
@@ -27,13 +26,15 @@ export default function App() {
   const errorCount = entries.reduce((sum, e) => sum + (e.errorCount ?? 0), 0);
   const warningCount = entries.reduce((sum, e) => sum + (e.warningCount ?? 0), 0);
 
+  const openSettings = () => open('settings');
+
   return (
     <div className="flex h-screen w-screen bg-gray-50 text-gray-900">
-      <Sidebar onOpenSettings={() => setSettingsOpen(true)} />
+      <Sidebar />
       <main className="relative flex-1">
         <ErrorBar errorCount={errorCount} warningCount={warningCount} />
         <button
-          onClick={() => setSettingsOpen(true)}
+          onClick={openSettings}
           className="absolute right-4 top-4 z-10 rounded-md bg-white px-3 py-1.5 text-sm shadow-sm hover:bg-gray-50"
         >
           {t('openKbButton')}
@@ -53,7 +54,7 @@ export default function App() {
           <div className="flex h-full flex-col items-center justify-center gap-3 text-sm text-gray-500">
             <p>{t('noActiveKb')}</p>
             <button
-              onClick={() => setSettingsOpen(true)}
+              onClick={openSettings}
               className="rounded-md bg-blue-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-600"
             >
               {t('openKbAction')}
@@ -63,7 +64,6 @@ export default function App() {
       </main>
       <RightPanelStack />
       {selectedEntryId && <DetailPanel />}
-      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }

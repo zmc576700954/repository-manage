@@ -1,12 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/store/useAppStore';
+import { usePanelStore } from '@/store/panelStore';
 import { EntryDialog, type EntryDialogMode } from '@/components/EntryDialog';
 import type { Entry } from '@shared/types';
-
-interface SidebarProps {
-  onOpenSettings: () => void;
-}
 
 interface GroupNode {
   kind: 'group';
@@ -24,7 +21,7 @@ type TreeNode = GroupNode | EntryNode;
 
 const ROOT_NODE_KEY = '__root__';
 
-export function Sidebar({ onOpenSettings }: SidebarProps) {
+export function Sidebar() {
   const { t } = useTranslation('Sidebar');
   const entries = useAppStore((s) => s.entries);
   const activeKbId = useAppStore((s) => s.activeKbId);
@@ -33,6 +30,7 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
   const loadEntries = useAppStore((s) => s.loadEntries);
   const selectedEntryId = useAppStore((s) => s.selectedEntryId);
   const selectEntry = useAppStore((s) => s.selectEntry);
+  const { open } = usePanelStore();
 
   const activeKb = useMemo(
     () => kbs.find((k) => k.id === activeKbId),
@@ -97,7 +95,7 @@ export function Sidebar({ onOpenSettings }: SidebarProps) {
               </button>
             )}
             <button
-              onClick={onOpenSettings}
+              onClick={() => open('settings')}
               className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
               title={t('manageKbTitle')}
             >
