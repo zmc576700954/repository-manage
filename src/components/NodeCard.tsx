@@ -6,14 +6,23 @@ export interface NodeCardData {
   group?: string;
   hasContentMd: boolean;
   accent?: string;
+  errorCount?: number;
+  warningCount?: number;
 }
 
 export function NodeCard({ data, selected }: NodeProps<NodeCardData>) {
   const { t } = useTranslation('NodeCard');
   const accent = data.accent ?? '#6B7280';
+  const hasError = (data.errorCount ?? 0) > 0;
+  const hasWarning = (data.warningCount ?? 0) > 0;
+  const validationBorder = hasError
+    ? 'border-2 border-red-500'
+    : hasWarning
+    ? 'border-2 border-yellow-400'
+    : '';
   return (
     <div
-      className={`max-w-[200px] min-w-[160px] overflow-hidden rounded-lg border bg-white px-3 py-2 shadow-sm transition ${
+      className={`max-w-[200px] min-w-[160px] overflow-hidden rounded-lg border bg-white px-3 py-2 shadow-sm transition ${validationBorder} ${
         selected
           ? 'border-blue-500 ring-2 ring-blue-200'
           : 'border-gray-200 hover:border-gray-300'

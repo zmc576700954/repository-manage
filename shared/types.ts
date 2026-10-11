@@ -36,6 +36,8 @@ export interface Entry {
   attachments: Attachment[];
   relations: Relation[];
   hasContentMd: boolean;
+  errorCount?: number;
+  warningCount?: number;
 }
 
 export interface Layout {

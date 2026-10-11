@@ -125,6 +125,8 @@ export function MapView() {
             group: entry.group,
             hasContentMd: entry.hasContentMd,
             accent: layout.accent,
+            errorCount: entry.errorCount,
+            warningCount: entry.warningCount,
           },
         });
       });
