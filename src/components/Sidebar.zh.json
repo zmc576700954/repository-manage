@@ -1,0 +1,12 @@
+{
+  "noKbTitle": "没有激活的知识库",
+  "noKbPath": "在「知识库」中添加一个",
+  "reloadButton": "↻ 从磁盘重载",
+  "reloadTitle": "从磁盘重新读取条目",
+  "createInRootTitle": "在 KB 根目录创建新文档",
+  "createInGroupTitle": "在「{{path}}」下创建新文档",
+  "createChildTitle": "为「{{title}}」创建下级文档",
+  "manageKbTitle": "管理知识库",
+  "emptyKb": "该知识库里还没有 entry。点上方 ＋ 创建第一个。",
+  "noKbYet": "没有激活的知识库。点击右上 ⚙ 添加一个。"
+}

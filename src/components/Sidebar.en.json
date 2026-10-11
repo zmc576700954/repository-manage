@@ -1,0 +1,12 @@
+{
+  "noKbTitle": "No knowledge base",
+  "noKbPath": "Add one in Knowledge Bases",
+  "reloadButton": "↻ Reload from disk",
+  "reloadTitle": "Reload entries from disk",
+  "createInRootTitle": "Create a new document in the KB root",
+  "createInGroupTitle": "Create a new document under \"{{path}}\"",
+  "createChildTitle": "Create a child document for \"{{title}}\"",
+  "manageKbTitle": "Manage knowledge bases",
+  "emptyKb": "This knowledge base has no entries yet. Click ＋ above to create the first one.",
+  "noKbYet": "No active knowledge base. Click ⚙ in the top-right to add one."
+}
