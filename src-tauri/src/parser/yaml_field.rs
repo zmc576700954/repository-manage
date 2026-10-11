@@ -11,6 +11,12 @@ pub struct YamlFields {
     pub pinned: Option<bool>,
     #[serde(default)]
     pub order: Option<i32>,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub preview: Option<String>,
+    #[serde(default)]
+    pub hidden: Option<bool>,
 }
 
 /// 从 Markdown 文件开头提取 --- 包裹的 YAML 块，返回解析结果。
@@ -139,5 +145,26 @@ shape: rect
     fn returns_none_for_unclosed_frontmatter() {
         let content = "---\ncolor: red\n";
         assert!(extract_yaml_frontmatter(content).is_none());
+    }
+
+    #[test]
+    fn parses_icon_field() {
+        let yaml = "icon: \"📌\"\n";
+        let parsed = parse_yaml_fields(yaml).unwrap();
+        assert_eq!(parsed.icon, Some("📌".to_string()));
+    }
+
+    #[test]
+    fn parses_preview_field() {
+        let yaml = "preview: full\n";
+        let parsed = parse_yaml_fields(yaml).unwrap();
+        assert_eq!(parsed.preview, Some("full".to_string()));
+    }
+
+    #[test]
+    fn parses_hidden_field() {
+        let yaml = "hidden: true\n";
+        let parsed = parse_yaml_fields(yaml).unwrap();
+        assert_eq!(parsed.hidden, Some(true));
     }
 }
