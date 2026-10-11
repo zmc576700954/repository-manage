@@ -5,6 +5,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use crate::index::Index;
 use crate::kb_registry::{KbRegistry, KBInfo};
+use crate::validator::ValidationReport;
 
 /// Holds the OS-level file watcher for the currently active KB root. When this
 /// is dropped, notify automatically unregisters the underlying watch. The
@@ -20,6 +21,9 @@ pub struct AppState {
     pub index: Arc<RwLock<Index>>,
     pub kbs: Arc<RwLock<KbRegistry>>,
     pub current_kb: Arc<RwLock<Option<KBInfo>>>,
+    /// Cached latest validation report for the active KB.
+    /// `None` until first validation run; updated by `validate_kb` command.
+    pub validation_report: Arc<RwLock<Option<ValidationReport>>>,
     /// Serializes every command that mutates the on-disk KB or its SQLite index.
     /// Mutating commands (`create_entry_simple`, `create_relation`, `rebuild_*`,
     /// KB switch / add / remove) acquire this lock for the duration of all

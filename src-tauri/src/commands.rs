@@ -870,6 +870,7 @@ mod tests {
             index: Arc::new(tokio::sync::RwLock::new(index)),
             kbs: Arc::new(tokio::sync::RwLock::new(registry)),
             current_kb: Arc::new(tokio::sync::RwLock::new(current_kb)),
+            validation_report: Arc::new(tokio::sync::RwLock::new(None)),
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
             watcher: Arc::new(std::sync::Mutex::new(None)),
             watch_tx: Arc::new(std::sync::Mutex::new(None)),
