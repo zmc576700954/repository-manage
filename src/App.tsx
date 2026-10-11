@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Sidebar } from '@/components/Sidebar';
+import { RightPanelStack } from '@/components/RightPanelStack';
 import { MapView } from '@/views/MapView';
 import { DetailPanel } from '@/views/DetailPanel';
 import { Settings } from '@/views/Settings';
@@ -54,6 +55,7 @@ export default function App() {
           </div>
         )}
       </main>
+      <RightPanelStack />
       {selectedEntryId && <DetailPanel />}
       {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
     </div>
