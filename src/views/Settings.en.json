@@ -1,0 +1,31 @@
+{
+  "title": "Knowledge Bases",
+  "language": {
+    "label": "Language",
+    "option": { "zh": "中文", "en": "English" }
+  },
+  "empty": "No registered knowledge bases yet. Add one below to get started.",
+  "activeBadge": "Active",
+  "entryCountOne": "entry",
+  "entryCountMany": "entries",
+  "rebuild": "↻ Rebuild",
+  "rebuilding": "…",
+  "activate": "Activate",
+  "remove": "Remove",
+  "removeTitle": "Remove (keeps index db)",
+  "confirmRemove": "Confirm",
+  "cancelRemove": "Cancel",
+  "addLabel": "Add knowledge base",
+  "namePlaceholder": "Name (e.g. Cross-border spider KB)",
+  "pathPlaceholder": "Directory path…",
+  "browseTitle": "Select knowledge base root",
+  "browse": "Browse",
+  "addIdle": "Add",
+  "addBusy": "Adding…",
+  "errors": {
+    "rebuildFailed": "Rebuild failed: {{msg}}",
+    "removeFailed": "Remove failed: {{msg}}",
+    "activateFailed": "Activate failed: {{msg}}",
+    "addFailed": "Add failed: {{msg}}"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "title": "知识库",
+  "language": {
+    "label": "语言",
+    "option": { "zh": "中文", "en": "English" }
+  },
+  "empty": "还没有注册的知识库。在下面添加一个开始。",
+  "activeBadge": "当前",
+  "entryCountOne": "个条目",
+  "entryCountMany": "个条目",
+  "rebuild": "↻ 重建索引",
+  "rebuilding": "…",
+  "activate": "激活",
+  "remove": "移除",
+  "removeTitle": "移除（保留索引 DB）",
+  "confirmRemove": "确认",
+  "cancelRemove": "取消",
+  "addLabel": "添加知识库",
+  "namePlaceholder": "名字（例如：跨境电商爬虫 KB）",
+  "pathPlaceholder": "目录路径…",
+  "browseTitle": "选择知识库根目录",
+  "browse": "浏览",
+  "addIdle": "添加",
+  "addBusy": "添加中…",
+  "errors": {
+    "rebuildFailed": "重建失败：{{msg}}",
+    "removeFailed": "移除失败：{{msg}}",
+    "activateFailed": "激活失败：{{msg}}",
+    "addFailed": "添加失败：{{msg}}"
+  }
+}
