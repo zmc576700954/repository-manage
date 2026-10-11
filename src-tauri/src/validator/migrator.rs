@@ -11,6 +11,14 @@ pub struct MigrationOptions {
     pub backup: bool,
 }
 
+/// Result of a migration run.
+///
+/// - `scanned`: total content.md files examined
+/// - `would_modify`: files that would be changed (always set; in dry-run equals what would be migrated)
+/// - `migrated`: files actually written (0 in dry-run)
+/// - `kept_with_warning`: files where `@synapse-group` was retained (heuristic chose Keep)
+/// - `backup_dir`: path to backup directory if `backup: true` and not dry-run
+/// - `log_path`: path to `.synapse-migrate.log` (only written when not dry-run)
 #[derive(Debug, Clone, Default)]
 pub struct MigrationResult {
     pub scanned: usize,
@@ -36,11 +44,21 @@ pub fn migrate_labels(
         result.backup_dir = Some(backup_dir);
     }
 
-    // 2. 扫所有 content.md
+    // 2. 扫所有 content.md (skip backup/log artifacts to avoid re-migrating backups)
     let entries: Vec<PathBuf> = WalkDir::new(kb_root)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name() == "content.md")
+        .filter(|e| {
+            // Skip entries inside backup/log dirs (any ancestor is a backup artifact)
+            for ancestor in e.path().ancestors() {
+                if let Some(name) = ancestor.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with(".synapse-migrate-backup-") || name == ".synapse-migrate.log" {
+                        return false;
+                    }
+                }
+            }
+            e.file_name() == "content.md"
+        })
         .map(|e| e.path().to_path_buf())
         .collect();
 
@@ -82,7 +100,6 @@ enum Decision {
 
 fn migrate_content(content: &str) -> (String, Option<Decision>) {
     let mut new_lines: Vec<String> = vec![];
-    let mut migrated = false;
     let mut kept = false;
     let mut new_label_line: Option<String> = None;
 
@@ -95,7 +112,6 @@ fn migrate_content(content: &str) -> (String, Option<Decision>) {
                     if new_label_line.is_none() {
                         new_label_line = Some(format!("<!-- @synapse-labels: {} -->", value));
                     }
-                    migrated = true;
                     continue; // 移除旧行
                 }
                 Class::Keep => {
@@ -135,6 +151,14 @@ enum Class {
     Keep,
 }
 
+/// Classify a `@synapse-group` value to decide Convert vs Keep.
+///
+/// Rules (in order):
+/// 1. Path-like (contains `/`) → Keep (denotes a category tree, not a label)
+/// 2. Pure version (`1.2.3`) → Keep (not a semantic label)
+/// 3. Kebab-case ASCII (`important`, `wip`) → Convert (single label)
+/// 4. Unicode non-ASCII → Convert (single label, e.g., Chinese)
+/// 5. Other ASCII (uppercase, mixed case) → Keep (ambiguous, user must decide)
 fn classify_group_value(value: &str) -> Class {
     // 规则 1: 含 `/` → 保留
     if value.contains('/') {
@@ -165,11 +189,10 @@ fn classify_group_value(value: &str) -> Class {
 
 fn chrono_now_compact() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
+    let dur = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    format!("{}", secs)
+        .unwrap_or_default();
+    format!("{}.{:09}", dur.as_secs(), dur.subsec_nanos())
 }
 
 fn copy_dir(
@@ -181,15 +204,24 @@ fn copy_dir(
     for entry in WalkDir::new(src) {
         let entry = entry?;
         let from = entry.path();
+
         if from == src {
             continue;
         }
-        let rel = from.strip_prefix(src).unwrap();
+
+        // Skip backup/log artifacts to prevent recursion and pollution
+        if let Some(name) = from.file_name().and_then(|n| n.to_str()) {
+            if name.starts_with(".synapse-migrate-backup-") || name == ".synapse-migrate.log" {
+                continue;
+            }
+        }
+
+        let rel = from.strip_prefix(src).expect("walkdir entry under src");
         let to = dst.join(rel);
+
         if entry.file_type().is_dir() {
             fs::create_dir_all(&to)?;
         } else if entry.file_type().is_file() {
-            // 仅备份 content.md 文件
             if let Some(name) = from.file_name().and_then(|n| n.to_str()) {
                 if name.ends_with(".md") && extensions.iter().any(|e| name.ends_with(e)) {
                     fs::copy(from, &to)?;
@@ -283,5 +315,60 @@ mod tests {
         assert_eq!(result.kept_with_warning, 1);
         let content = fs::read_to_string(kb.join("foo/content.md")).unwrap();
         assert!(content.contains("@synapse-group"));
+    }
+
+    #[test]
+    fn idempotent_double_migration() {
+        let dir = tempdir().unwrap();
+        let kb = dir.path();
+        write_entry(
+            kb,
+            "foo",
+            "<!-- @synapse-id: foo -->\n<!-- @synapse-group: important -->\n\nbody\n",
+        );
+
+        let _ = migrate_labels(kb, MigrationOptions { dry_run: false, backup: false }).unwrap();
+        let _ = migrate_labels(kb, MigrationOptions { dry_run: false, backup: false }).unwrap();
+
+        let content = fs::read_to_string(kb.join("foo/content.md")).unwrap();
+        let label_count = content.matches("@synapse-labels").count();
+        assert_eq!(label_count, 1, "@synapse-labels must not be double-inserted");
+    }
+
+    #[test]
+    fn backup_creates_directory_with_originals() {
+        let dir = tempdir().unwrap();
+        let kb = dir.path();
+        write_entry(
+            kb,
+            "foo",
+            "<!-- @synapse-id: foo -->\n<!-- @synapse-group: important -->\n\nbody\n",
+        );
+
+        let result = migrate_labels(kb, MigrationOptions { dry_run: false, backup: true }).unwrap();
+
+        assert!(result.backup_dir.is_some());
+        let backup = result.backup_dir.unwrap();
+        assert!(backup.exists(), "backup directory should exist");
+        let backup_file = backup.join("foo/content.md");
+        assert!(backup_file.exists(), "backup should contain original file");
+        let backup_content = fs::read_to_string(&backup_file).unwrap();
+        assert!(backup_content.contains("@synapse-group"));
+    }
+
+    #[test]
+    fn backup_skips_prior_backup_dir() {
+        let dir = tempdir().unwrap();
+        let kb = dir.path();
+        // Create a fake prior backup directory in kb_root
+        let prior_backup = kb.join(".synapse-migrate-backup-1234567890");
+        fs::create_dir(&prior_backup).unwrap();
+        fs::write(prior_backup.join("ignored.md"), "old").unwrap();
+
+        let result = migrate_labels(kb, MigrationOptions { dry_run: false, backup: true }).unwrap();
+
+        let new_backup = result.backup_dir.unwrap();
+        let copied_prior = new_backup.join(".synapse-migrate-backup-1234567890");
+        assert!(!copied_prior.exists(), "prior backup should not be copied into new backup");
     }
 }
