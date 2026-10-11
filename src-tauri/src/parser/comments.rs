@@ -28,6 +28,15 @@ pub fn parse_metadata_comments(content: &str) -> HashMap<String, String> {
     metadata
 }
 
+/// 将逗号分隔的标签字符串拆分为 Vec<String>，自动 trim，过滤空段。
+pub fn extract_labels(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,5 +218,31 @@ Some text with @synapse-id: ignored
             metadata.get("ignore").map(|s| s.as_str()),
             Some("W5, W7")
         );
+    }
+
+    // ===== Tests for extract_labels helper =====
+
+    #[test]
+    fn extract_labels_handles_empty() {
+        let labels = extract_labels("");
+        assert!(labels.is_empty());
+    }
+
+    #[test]
+    fn extract_labels_handles_whitespace() {
+        let labels = extract_labels("  important , wip ,  done  ");
+        assert_eq!(labels, vec!["important", "wip", "done"]);
+    }
+
+    #[test]
+    fn extract_labels_filters_empty_segments() {
+        let labels = extract_labels("important,, wip,");
+        assert_eq!(labels, vec!["important", "wip"]);
+    }
+
+    #[test]
+    fn extract_labels_preserves_unicode() {
+        let labels = extract_labels("重要, 已完成, wip");
+        assert_eq!(labels, vec!["重要", "已完成", "wip"]);
     }
 }
