@@ -165,12 +165,12 @@ impl Index {
         let error_count = entry
             .validation
             .iter()
-            .filter(|v| v.severity == "error")
+            .filter(|v| matches!(v.severity, crate::validator::Severity::Error) && !v.ignored)
             .count() as i32;
         let warning_count = entry
             .validation
             .iter()
-            .filter(|v| v.severity == "warning")
+            .filter(|v| matches!(v.severity, crate::validator::Severity::Warning) && !v.ignored)
             .count() as i32;
 
         conn.execute(
@@ -742,19 +742,28 @@ mod tests {
         entry.ignored_rules = vec!["W5".to_string(), "E12".to_string()];
         entry.validation = vec![
             crate::validator::ValidationIssue {
+                entry_id: "v2".to_string(),
                 rule_id: "E1".to_string(),
+                severity: crate::validator::Severity::Error,
                 message: "first error".to_string(),
-                severity: "error".to_string(),
+                file_line: None,
+                ignored: false,
             },
             crate::validator::ValidationIssue {
+                entry_id: "v2".to_string(),
                 rule_id: "W1".to_string(),
+                severity: crate::validator::Severity::Warning,
                 message: "first warn".to_string(),
-                severity: "warning".to_string(),
+                file_line: None,
+                ignored: false,
             },
             crate::validator::ValidationIssue {
+                entry_id: "v2".to_string(),
                 rule_id: "W2".to_string(),
+                severity: crate::validator::Severity::Warning,
                 message: "second warn".to_string(),
-                severity: "warning".to_string(),
+                file_line: None,
+                ignored: false,
             },
         ];
 
