@@ -5,11 +5,12 @@ pub mod rules;
 pub mod system_labels;
 pub mod migrator;
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use crate::entry::RawEntry;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Severity {
     Error,
     Warning,
@@ -33,25 +34,23 @@ pub struct ValidationReport {
 }
 
 impl ValidationReport {
-    pub fn error_count(&self) -> usize {
+    fn count_by_severity(&self, severity: Severity) -> usize {
         self.issues
             .iter()
-            .filter(|i| matches!(i.severity, Severity::Error) && !i.ignored)
+            .filter(|i| matches!(i.severity, severity) && !i.ignored)
             .count()
+    }
+
+    pub fn error_count(&self) -> usize {
+        self.count_by_severity(Severity::Error)
     }
 
     pub fn warning_count(&self) -> usize {
-        self.issues
-            .iter()
-            .filter(|i| matches!(i.severity, Severity::Warning) && !i.ignored)
-            .count()
+        self.count_by_severity(Severity::Warning)
     }
 
     pub fn info_count(&self) -> usize {
-        self.issues
-            .iter()
-            .filter(|i| matches!(i.severity, Severity::Info) && !i.ignored)
-            .count()
+        self.count_by_severity(Severity::Info)
     }
 
     pub fn has_errors(&self) -> bool {
@@ -71,8 +70,7 @@ pub fn validate_kb(kb_root: &Path) -> ValidationReport {
         Err(_) => return report,
     };
 
-    let all_ids: std::collections::HashSet<String> =
-        entries.iter().map(|e| e.id.clone()).collect();
+    let all_ids: HashSet<String> = entries.iter().map(|e| e.id.clone()).collect();
 
     for entry in &entries {
         let issues = rules::check_all(entry, kb_root, &all_ids);
