@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
+import { tRule } from '@/utils/tRule';
 
 // Severity serializes from Rust as a unit-variant object (e.g. {"Error": null}).
 type Severity = 'Error' | 'Warning' | 'Info';
@@ -25,6 +26,7 @@ const severityKey = (s: Record<Severity, null>): Severity => {
 
 export const ValidationPanel: React.FC = () => {
   const { t } = useTranslation('ValidationPanel');
+  const { t: tVal } = useTranslation('Validation');
   const [report, setReport] = useState<ValidationReport | null>(null);
   const [tab, setTab] = useState<Severity>('Error');
 
@@ -64,15 +66,22 @@ export const ValidationPanel: React.FC = () => {
         {filtered.length === 0 ? (
           <div className="text-sm text-gray-500">{t('noIssues')}</div>
         ) : (
-          filtered.map((issue, i) => (
-            <div
-              key={i}
-              className="rounded border border-gray-200 bg-white p-2 text-xs"
-            >
-              <div className="font-medium">{issue.rule_id}: {issue.entry_id}</div>
-              <div className="text-gray-600">{issue.message}</div>
-            </div>
-          ))
+          filtered.map((issue, i) => {
+            const { title, message } = tRule(tVal, issue.rule_id, {
+              id: issue.entry_id,
+              target: issue.message.match(/\[\[(.+?)\]\]/)?.[1] || '',
+              expected: issue.message.match(/should equal "(.+?)"/)?.[1] || '',
+            });
+            return (
+              <div
+                key={i}
+                className="rounded border border-gray-200 bg-white p-2 text-xs"
+              >
+                <div className="font-medium">{title}: {issue.entry_id}</div>
+                <div className="text-gray-600">{message || issue.message}</div>
+              </div>
+            );
+          })
         )}
       </div>
     </div>
