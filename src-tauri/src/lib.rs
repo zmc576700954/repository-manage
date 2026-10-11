@@ -286,6 +286,12 @@ async fn run_startup_rebuild(state: &AppState) {
     if let Err(e) = idx.rebuild(&kb_path) {
         eprintln!("[startup] rebuild failed: {e}");
     }
+
+    // Run validation after rebuild (still inside write_lock) so the frontend
+    // has a cached report immediately on startup. validate_kb is sync and does
+    // file I/O, but startup is single-threaded so blocking is acceptable.
+    let report = crate::validator::validate_kb(&kb_path);
+    *state.validation_report.write().await = Some(report);
 }
 
 #[cfg(all(test, feature = "tauri"))]
