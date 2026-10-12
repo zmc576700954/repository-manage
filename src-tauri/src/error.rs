@@ -84,6 +84,11 @@ pub enum AppError {
     /// Fix dispatch asked for a rule id that has no implementation.
     #[error("unknown-rule: {rule_id}")]
     UnknownRule { rule_id: String },
+
+    /// Backup id passed to `restore_backup` did not match any backup
+    /// under the active KB's `.synapse-fix-backup` directory.
+    #[error("backup-not-found: {id}")]
+    BackupNotFound { id: String },
 }
 
 impl AppError {

@@ -132,6 +132,9 @@ pub fn run() {
             commands::run_validation,
             commands::get_kb_config,
             commands::update_kb_config,
+            commands::apply_fix,
+            commands::list_backups,
+            commands::restore_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

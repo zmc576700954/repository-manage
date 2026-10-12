@@ -1,5 +1,6 @@
 #![cfg(feature = "tauri")]
 
+use crate::entry::RawEntry;
 use crate::error::{AppError, AppResult};
 use crate::index::{Index, StoredEntry};
 use crate::kb_registry::KBInfo;
@@ -766,6 +767,171 @@ fn swap_watcher(state: &AppState, new_root: Option<&std::path::Path>) {
             }
         }
     }
+}
+
+// ---------- Fix & Backup commands (Task 15) ----------
+
+/// Returned by `apply_fix` to the frontend. Carries the rule id and
+/// entry id (so the caller can match this to the issue it dispatched
+/// from) plus the `FixDescriptor` that was applied. `backupId` is
+/// always `None` today — every fix impl calls
+/// `backup_then_write` internally and the resulting `Backup` lives in
+/// `.synapse-fix-backup/`; we don't yet expose its id to the JS side.
+/// The field is reserved for the future case where a fix would not
+/// create its own backup.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FixApplyResult {
+    pub rule_id: String,
+    pub entry_id: String,
+    pub descriptor: validator::fix::FixDescriptor,
+    pub backup_id: Option<String>,
+}
+
+/// Apply a validator fix to a single entry. The fix is dispatched by
+/// `rule_id` (E1–E9) to the appropriate `validator::fix_impls`
+/// helper. After the fix writes to disk, the index is rebuilt so the
+/// UI sees the new content on the next `get_entries`.
+///
+/// `confirm` must be `Some(true)` for Confirm-class rules (E2 / E6 /
+/// E9); OneClick rules ignore it. The frontend drives this from the
+/// "Apply" / "Confirm" buttons in the FixDrawer.
+///
+/// Resolution: the `Index` stores the on-disk path of each entry. For
+/// directory-format KBs that is `<dir>/content.md`; for flat-format
+/// KBs it is the entry `.md` file itself. Fix impls use two pieces of
+/// information:
+///   * `entry_dir.file_name()` — to derive the canonical id from the
+///     on-disk path.
+///   * `entry.content_path` — the actual file to read/write.
+///
+/// We construct a minimal `RawEntry` matching that contract directly,
+/// instead of going through `read_entry` (which assumes a directory
+/// containing `content.md`) or `read_md_file` (which derives its own
+/// id and would diverge from the DB's id after a rename).
+#[tauri::command(rename_all = "camelCase")]
+pub async fn apply_fix(
+    state: State<'_, AppState>,
+    entry_id: String,
+    rule_id: String,
+    confirm: Option<bool>,
+) -> AppResult<FixApplyResult> {
+    let _guard = state.write_lock.lock().await;
+
+    // 1) Look up the on-disk file path for this entry.
+    let md_path = {
+        let idx = state.index.read().await;
+        idx.get_entry_path(&entry_id)?
+            .ok_or_else(|| AppError::EntryNotFound {
+                id: entry_id.clone(),
+            })?
+    };
+
+    // 2) Pick `entry_dir` so that `entry_dir.file_name()` returns the
+    //    entry's id. Directory-format KBs land at `<dir>/content.md`,
+    //    so the parent directory IS the entry. Flat-format KBs land
+    //    at `<root>/<stem>.md`, so we synthesize a virtual entry_dir
+    //    by stripping the `.md` extension — the fix only calls
+    //    `file_name()` on this path, never `parent()` or `exists()`.
+    let entry_dir = if md_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        == Some("content.md")
+    {
+        md_path.parent().unwrap_or(&md_path).to_path_buf()
+    } else {
+        md_path.with_extension("")
+    };
+
+    // 3) Build the minimal RawEntry the fix impl needs.
+    let entry = RawEntry {
+        id: entry_id.clone(),
+        title: String::new(),
+        tags: vec![],
+        group: None,
+        path: entry_dir.clone(),
+        content_path: md_path.clone(),
+        attachments: vec![],
+        linked_targets: vec![],
+        markdown_links: vec![],
+        yaml: None,
+        has_content_md: true,
+        labels: vec![],
+        status: None,
+        aliases: vec![],
+        source: None,
+        created: None,
+        updated: None,
+        ignored_rules: vec![],
+        validation: vec![],
+    };
+
+    let confirm = confirm.unwrap_or(false);
+
+    // 4) Dispatch the fix. Unknown rule ids surface as AppError::UnknownRule.
+    let descriptor = validator::fix_impls::descriptor_and_apply(
+        rule_id.as_str(),
+        &entry,
+        &entry_dir,
+        confirm,
+    )?;
+
+    // 5) Rebuild so the UI reflects the new content on the next read.
+    //    Errors here are not fatal — the on-disk fix already succeeded;
+    //    a stale index will self-heal on the next watcher tick.
+    let kb_root = kb_root_or_err(&state).await?;
+    if let Ok(idx) = state.index.try_read() {
+        let _ = idx.rebuild(&kb_root);
+    }
+
+    Ok(FixApplyResult {
+        rule_id,
+        entry_id,
+        descriptor,
+        backup_id: None,
+    })
+}
+
+/// List every backup under `<kb_root>/.synapse-fix-backup/`. Returns
+/// an empty vec for a KB that has never had a fix applied (the
+/// directory is created on demand). The frontend uses this to populate
+/// the "Restore from backup" picker in the FixDrawer.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn list_backups(
+    state: State<'_, AppState>,
+) -> AppResult<Vec<crate::fs::backup::Backup>> {
+    let kb_root = kb_root_or_err(&state).await?;
+    Ok(crate::fs::backup::list_backups(&kb_root))
+}
+
+/// Restore the file named by `backup_id` to its original on-disk
+/// path (as recorded in the backup's `.meta` sidecar). Rebuilds the
+/// index afterward so the UI reflects the restored content.
+///
+/// Takes the `write_lock` because `apply` calls do: this modifies the
+/// KB's `.md` files, and we don't want a concurrent `apply_fix` to
+/// observe half-restored state.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn restore_backup(
+    state: State<'_, AppState>,
+    backup_id: String,
+) -> AppResult<()> {
+    let _guard = state.write_lock.lock().await;
+
+    let kb_root = kb_root_or_err(&state).await?;
+    let backups = crate::fs::backup::list_backups(&kb_root);
+    let backup = backups
+        .into_iter()
+        .find(|b| b.id == backup_id)
+        .ok_or_else(|| AppError::BackupNotFound {
+            id: backup_id.clone(),
+        })?;
+    crate::fs::backup::restore_backup(&backup)?;
+
+    if let Ok(idx) = state.index.try_read() {
+        let _ = idx.rebuild(&kb_root);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
