@@ -1,7 +1,3 @@
 {
-  "errors_one": "{{count}} error",
-  "errors_other": "{{count}} errors",
-  "warnings_one": "{{count}} warning",
-  "warnings_other": "{{count}} warnings",
-  "clickToView": "click to view"
+  "tooltip": "View {{errors}} errors and {{warnings}} warnings"
 }

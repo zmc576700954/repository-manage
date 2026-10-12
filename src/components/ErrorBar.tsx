@@ -9,24 +9,24 @@ interface Props {
 
 export const ErrorBar: React.FC<Props> = ({ errorCount, warningCount }) => {
   const { t } = useTranslation('ErrorBar');
-  const { open } = usePanelStore();
+  const open = usePanelStore((s) => s.open);
 
   if (errorCount === 0 && warningCount === 0) return null;
 
+  const isError = errorCount > 0;
+  const colorClass = isError
+    ? 'bg-red-100 text-red-800 hover:bg-red-200'
+    : 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200';
+
   return (
-    <div
-      className={`cursor-pointer px-4 py-2 text-sm ${
-        errorCount > 0
-          ? 'bg-red-100 text-red-800'
-          : 'bg-yellow-100 text-yellow-800'
-      }`}
+    <button
       onClick={() => open('validation')}
+      className={`absolute right-4 top-4 z-10 rounded-full px-3 py-1 text-xs shadow-sm transition-colors ${colorClass}`}
+      title={t('tooltip', { errors: errorCount, warnings: warningCount })}
     >
-      {errorCount > 0 && t('errors', { count: errorCount })}
-      {errorCount > 0 && warningCount > 0 && ' · '}
-      {warningCount > 0 && t('warnings', { count: warningCount })}
-      {' — '}
-      {t('clickToView')}
-    </div>
+      {isError && `⚠ ${errorCount}`}
+      {isError && warningCount > 0 && ' · '}
+      {!isError && warningCount > 0 && `${warningCount}`}
+    </button>
   );
 };
