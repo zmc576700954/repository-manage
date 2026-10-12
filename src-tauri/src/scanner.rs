@@ -14,7 +14,7 @@ pub fn find_entry_dirs(root: &Path) -> Vec<PathBuf> {
     }
 
     for entry in WalkDir::new(root)
-        .max_depth(3)
+        .max_depth(8)
         .into_iter()
         .filter_map(Result::ok)
     {
