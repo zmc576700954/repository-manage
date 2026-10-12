@@ -132,6 +132,7 @@ impl Index {
         }
         let conn = Connection::open(path)?;
         conn.execute_batch(SCHEMA)?;
+        Self::migrate_schema(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -139,6 +140,35 @@ impl Index {
 
     pub fn open_default() -> rusqlite::Result<Self> {
         Self::open(&index_db_path())
+    }
+
+    /// 为已存在的 DB 补齐新加的列。`CREATE TABLE IF NOT EXISTS` 对旧库无效，
+    /// 所以显式 ALTER TABLE 一下。列已存在会被 SQLite 报错，我们吞掉。
+    fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
+        let add_columns = [
+            "ALTER TABLE entries ADD COLUMN labels TEXT",
+            "ALTER TABLE entries ADD COLUMN status TEXT",
+            "ALTER TABLE entries ADD COLUMN aliases TEXT",
+            "ALTER TABLE entries ADD COLUMN source TEXT",
+            "ALTER TABLE entries ADD COLUMN created TEXT",
+            "ALTER TABLE entries ADD COLUMN updated TEXT",
+            "ALTER TABLE entries ADD COLUMN ignored_rules TEXT",
+            "ALTER TABLE entries ADD COLUMN error_count INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE entries ADD COLUMN warning_count INTEGER NOT NULL DEFAULT 0",
+        ];
+        for sql in add_columns {
+            // 重复 ALTER 同一列会失败；用 `duplicate column name` 作为「已存在」的信号。
+            match conn.execute(sql, []) {
+                Ok(_) => {}
+                Err(e) => {
+                    let msg = e.to_string();
+                    if !msg.contains("duplicate column name") {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn upsert_entry(&self, entry: &RawEntry) -> rusqlite::Result<()> {
