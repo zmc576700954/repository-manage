@@ -1,4 +1,4 @@
-import { useState, useCallback, KeyboardEvent } from 'react';
+import { useState, useCallback, useRef, KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/store/useAppStore';
 import type { Entry } from '@shared/types';
@@ -44,6 +44,14 @@ export function EntryMetadataEditor({ entry }: Props) {
     if (!trimmed) return;
     if (trimmed.includes(',')) {
       setError(t('errorInvalidTag'));
+      return;
+    }
+    if (trimmed.length > 50) {
+      setError(t('errorTagTooLong'));
+      return;
+    }
+    if (tags.length >= 15) {
+      setError(t('errorTooManyTags'));
       return;
     }
     if (tags.includes(trimmed)) {

@@ -12,5 +12,8 @@
   "statusDeprecated": "Deprecated",
   "removeTagAria": "Remove",
   "errorEmptyTitle": "Title must not be empty",
-  "errorInvalidTag": "Tag must not contain comma"
+  "errorInvalidTag": "Tag must not contain comma",
+  "errorTagTooLong": "Tag must not exceed 50 characters",
+  "errorTooManyTags": "Maximum 15 tags allowed",
+  "savedFlash": "Saved"
 }
