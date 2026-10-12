@@ -1,6 +1,5 @@
 {
   "loading": "Loading…",
-  "openKbButton": "⚙ Knowledge Bases",
   "noActiveKb": "No active knowledge base.",
-  "openKbAction": "Open Knowledge Bases"
+  "openKbAction": "Open knowledge base"
 }
