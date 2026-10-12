@@ -137,6 +137,7 @@ pub fn run() {
             commands::restore_backup,
             commands::update_entry_metadata,
             commands::precheck_rename,
+            commands::execute_rename,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

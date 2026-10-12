@@ -1123,6 +1123,228 @@ pub async fn precheck_rename(
     precheck_rename_impl(state.inner(), id, new_name, new_group).await
 }
 
+// ---------- Execute rename (Cycle 2) ----------
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameResult {
+    pub new_id: String,
+    pub updated_files: Vec<String>,
+}
+
+/// Atomically rename/move an entry: cascade `[[old_id]]` references in
+/// other files, move the .md to its new path, update the
+/// `@synapse-id` comment, migrate the SQLite row + relation edges,
+/// and transfer the layout position. All in one write_lock.
+///
+/// `cascade=true` updates all incoming wikilinks; `cascade=false`
+/// leaves them as broken refs (the dialog asks the user to pick).
+pub async fn execute_rename_impl(
+    state: &AppState,
+    id: String,
+    new_name: String,
+    new_group: String,
+    cascade: bool,
+) -> AppResult<RenameResult> {
+    use crate::scanner::find_md_files;
+
+    let _guard = state.write_lock.lock().await;
+    let kb_root = kb_root_or_err(state).await?;
+
+    // 1) Compute new path / new id (same scheme as precheck).
+    let new_path = if new_group.is_empty() {
+        kb_root.join(format!("{new_name}.md"))
+    } else {
+        kb_root.join(&new_group).join(format!("{new_name}.md"))
+    };
+    let new_id = if new_group.is_empty() {
+        new_name.clone()
+    } else {
+        format!("{new_group}-{new_name}").replace(['\\', '/'], "-")
+    };
+
+    // 2) Resolve old path.
+    let old_path = {
+        let idx = state.index.read().await;
+        idx.get_entry_path(&id)?
+            .ok_or_else(|| AppError::EntryNotFound { id: id.clone() })?
+    };
+    if new_path == old_path {
+        // No-op rename (same path). Just rebuild to be safe.
+        let idx = state.index.read().await;
+        let _ = idx.rebuild(&kb_root);
+        return Ok(RenameResult { new_id, updated_files: vec![] });
+    }
+
+    // 3) Conflict check (id exists in another entry) — must run before
+    //    the path-exists check so we prefer the more specific error.
+    {
+        let idx = state.index.read().await;
+        let entries = idx.get_all_entries()?;
+        if entries.iter().any(|e| e.id == new_id && e.id != id) {
+            return Err(AppError::RenameConflict { new_id });
+        }
+    }
+
+    // 4) Path-exists check.
+    if new_path.exists() {
+        return Err(AppError::RenameFileExists { path: new_path.to_string_lossy().to_string() });
+    }
+
+    // 4) Cascade: find/replace `[[old_id]]` → `[[new_id]]` in every
+    //    other .md, skipping code blocks. Track files we touch so we
+    //    can report them in the result and roll back on failure.
+    let mut updated_files: Vec<String> = Vec::new();
+    let mut pre_cascade_cache: Vec<(std::path::PathBuf, String)> = Vec::new();
+    if cascade && id != new_id {
+        let needle = format!("[[{id}]]");
+        let replacement = format!("[[{new_id}]]");
+        for file in find_md_files(&kb_root) {
+            if file == old_path {
+                continue;
+            }
+            let content = match std::fs::read_to_string(&file) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let (new_content, count) = cascade_replace(&content, &needle, &replacement);
+            if count > 0 {
+                pre_cascade_cache.push((file.clone(), content));
+                if let Err(e) = std::fs::write(&file, &new_content) {
+                    // Roll back all already-cascaded files
+                    for (path, original) in pre_cascade_cache {
+                        let _ = std::fs::write(&path, original);
+                    }
+                    return Err(AppError::CascadeFailed {
+                        failed_files: vec![file.to_string_lossy().to_string()],
+                        reason: e.to_string(),
+                    });
+                }
+                if let Ok(rel) = file.strip_prefix(&kb_root) {
+                    updated_files.push(rel.to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+    }
+
+    // 5) Move the .md file.
+    if let Some(parent) = new_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Err(e) = std::fs::rename(&old_path, &new_path) {
+        // Rollback cascade
+        for (path, original) in &pre_cascade_cache {
+            let _ = std::fs::write(path, original);
+        }
+        return Err(AppError::io(
+            format!("execute_rename: rename {} -> {}", old_path.display(), new_path.display()),
+            e,
+        ));
+    }
+
+    // 6) Update @synapse-id in the moved file via a targeted regex
+    //    replace (no validation needed — the id is path-derived and
+    //    we just computed it).
+    if let Err(e) = update_synapse_id_in_file(&new_path, &id, &new_id) {
+        // Rollback file move
+        let _ = std::fs::rename(&new_path, &old_path);
+        for (path, original) in &pre_cascade_cache {
+            let _ = std::fs::write(path, original);
+        }
+        return Err(AppError::io(
+            format!("execute_rename: update @synapse-id in {}", new_path.display()),
+            e,
+        ));
+    }
+
+    // 7) Migrate SQLite row + relations.
+    {
+        let idx = state.index.read().await;
+        if let Err(e) = idx.rename_entry_id(&id, &new_id) {
+            // Rollback
+            let _ = update_synapse_id_in_file(&new_path, &new_id, &id);
+            let _ = std::fs::rename(&new_path, &old_path);
+            for (path, original) in &pre_cascade_cache {
+                let _ = std::fs::write(path, original);
+            }
+            return Err(AppError::DatabaseOp { message: format!("rename_entry_id: {e}") });
+        }
+    }
+
+    // 8) Transfer layout position (old id → new id).
+    if let Err(e) = crate::layout_store::rename_key(&kb_root, &id, &new_id) {
+        // Layout failure is non-fatal — the rename is already done.
+        eprintln!("[execute_rename] layout rename_key failed: {e}");
+    }
+
+    // 9) Rebuild the index to refresh derived data (path, group, etc).
+    {
+        let idx = state.index.read().await;
+        let _ = idx.rebuild(&kb_root);
+    }
+
+    Ok(RenameResult { new_id, updated_files })
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn execute_rename(
+    state: State<'_, AppState>,
+    id: String,
+    new_name: String,
+    new_group: String,
+    cascade: bool,
+) -> AppResult<RenameResult> {
+    let state_ref = state.inner();
+    execute_rename_impl(state_ref, id, new_name, new_group, cascade).await
+}
+
+/// Replace `needle` with `replacement` in `content`, but skip lines
+/// inside fenced code blocks. Returns `(new_content, replacement_count)`.
+fn cascade_replace(content: &str, needle: &str, replacement: &str) -> (String, u32) {
+    let mut result = String::with_capacity(content.len());
+    let mut in_code = false;
+    let mut count: u32 = 0;
+    for line in content.lines() {
+        let was_in_code = in_code;
+        if line.trim_start().starts_with("```") {
+            in_code = !in_code;
+        }
+        if was_in_code {
+            // Inside a code block — pass through untouched.
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+        if line.contains(needle) {
+            count += line.matches(needle).count() as u32;
+            result.push_str(&line.replace(needle, replacement));
+        } else {
+            result.push_str(line);
+        }
+        result.push('\n');
+    }
+    // Preserve trailing-newline behaviour: if the original did NOT end
+    // with a newline, drop the last one we just added.
+    if !content.ends_with('\n') && result.ends_with('\n') {
+        result.pop();
+    }
+    (result, count)
+}
+
+/// Direct regex replace of `<!-- @synapse-id: OLD -->` → `<!-- @synapse-id: NEW -->`
+/// in the file at `path`. No validation; just a targeted string rewrite.
+fn update_synapse_id_in_file(path: &Path, old: &str, new: &str) -> std::io::Result<()> {
+    use regex::Regex;
+    let content = std::fs::read_to_string(path)?;
+    let pattern = format!(r"<!-- @synapse-id:\s*{}\s*-->", regex::escape(old));
+    let re = Regex::new(&pattern).expect("valid regex");
+    let new_content = re.replace(&content, format!("<!-- @synapse-id: {new} -->")).into_owned();
+    if new_content != content {
+        std::fs::write(path, new_content)?;
+    }
+    Ok(())
+}
+
 /// Walk every .md under `kb_root` (except files that contain the
 /// `@synapse-id: old_id` declaration) and count occurrences of
 /// `[[old_id]]` outside of code blocks. Returns
@@ -1796,5 +2018,172 @@ End of note.
         .await
         .unwrap();
         assert_eq!(precheck.incoming_count, 1, "only the real ref counts");
+    }
+
+    // ---------- execute_rename ----------
+
+    /// Happy path: rename the file, update @synapse-id, cascade
+    /// wikilinks in other files, update the DB. The new id resolves
+    /// in the rebuilt index; old id is gone.
+    #[tokio::test]
+    async fn execute_rename_cascades_incoming_wikilinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::write(
+            kb_root.join("target.md"),
+            "<!-- @synapse-id: target -->\n# Target\n",
+        )
+        .unwrap();
+        std::fs::write(
+            kb_root.join("hub.md"),
+            "<!-- @synapse-id: hub -->\n# Hub\n\nSee [[target]].\n",
+        )
+        .unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        let result = execute_rename_impl(
+            &state,
+            "target".to_string(),
+            "target-v2".to_string(),
+            "".to_string(),
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.new_id, "target-v2");
+
+        // hub's content was updated
+        let hub = std::fs::read_to_string(kb_root.join("hub.md")).unwrap();
+        assert!(hub.contains("[[target-v2]]"), "wikilink not cascaded: {hub}");
+        assert!(!hub.contains("[[target]]"), "old wikilink still present: {hub}");
+
+        // target's file moved and @synapse-id updated
+        let target = std::fs::read_to_string(kb_root.join("target-v2.md")).unwrap();
+        assert!(target.contains("<!-- @synapse-id: target-v2 -->"), "@synapse-id not updated: {target}");
+
+        // Old file is gone
+        assert!(!kb_root.join("target.md").exists(), "old file must be removed");
+    }
+
+    /// Code blocks must NOT be touched by cascade. A `[[target]]` inside
+    /// a ``` block should be preserved verbatim.
+    #[tokio::test]
+    async fn execute_rename_skips_code_blocks() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::write(
+            kb_root.join("target.md"),
+            "<!-- @synapse-id: target -->\n",
+        )
+        .unwrap();
+        std::fs::write(
+            kb_root.join("doc.md"),
+            "<!-- @synapse-id: doc -->\n\
+             # Doc\n\n\
+             Real: [[target]]\n\n\
+             ```markdown\n\
+             Example: [[target]]\n\
+             ```\n",
+        )
+        .unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        execute_rename_impl(
+            &state,
+            "target".to_string(),
+            "target-v2".to_string(),
+            "".to_string(),
+            true,
+        )
+        .await
+        .unwrap();
+
+        let doc = std::fs::read_to_string(kb_root.join("doc.md")).unwrap();
+        assert!(doc.contains("Real: [[target-v2]]"), "real ref cascaded");
+        assert!(doc.contains("Example: [[target]]"), "code block ref preserved: {doc}");
+    }
+
+    /// cascade=false leaves the wikilinks in other files broken —
+    /// the user is opting out of auto-update.
+    #[tokio::test]
+    async fn execute_rename_without_cascade_leaves_broken_wikilinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::write(
+            kb_root.join("target.md"),
+            "<!-- @synapse-id: target -->\n",
+        )
+        .unwrap();
+        std::fs::write(
+            kb_root.join("hub.md"),
+            "<!-- @synapse-id: hub -->\n# Hub\n\nSee [[target]].\n",
+        )
+        .unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        execute_rename_impl(
+            &state,
+            "target".to_string(),
+            "target-v2".to_string(),
+            "".to_string(),
+            false, // cascade disabled
+        )
+        .await
+        .unwrap();
+
+        let hub = std::fs::read_to_string(kb_root.join("hub.md")).unwrap();
+        assert!(hub.contains("[[target]]"), "old wikilink must remain: {hub}");
+    }
+
+    /// If the target id already exists, execute_rename must fail
+    /// loudly without modifying any file.
+    #[tokio::test]
+    async fn execute_rename_to_existing_id_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::write(
+            kb_root.join("alpha.md"),
+            "<!-- @synapse-id: alpha -->\n",
+        )
+        .unwrap();
+        std::fs::write(
+            kb_root.join("beta.md"),
+            "<!-- @synapse-id: beta -->\n",
+        )
+        .unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        let err = execute_rename_impl(
+            &state,
+            "alpha".to_string(),
+            "beta".to_string(),
+            "".to_string(),
+            true,
+        )
+        .await
+        .expect_err("rename to existing id must fail");
+        let msg = format!("{err}");
+        assert!(msg.starts_with("rename-conflict:"), "got: {msg}");
+
+        // Both files must be unchanged on disk.
+        assert!(kb_root.join("alpha.md").exists());
+        assert!(kb_root.join("beta.md").exists());
     }
 }
