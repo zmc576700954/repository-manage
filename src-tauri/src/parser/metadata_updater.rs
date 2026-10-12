@@ -63,6 +63,8 @@ fn replace_or_insert(content: &str, field: &str, value: &str) -> String {
 }
 
 /// Field changes passed from the frontend. `None` means "leave alone".
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MetadataChanges {
     pub title: Option<String>,
     pub tags: Option<Vec<String>>,

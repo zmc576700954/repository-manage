@@ -934,9 +934,129 @@ pub async fn restore_backup(
     Ok(())
 }
 
+// ---------- Inline metadata editing (Cycle 2, Task 6) ----------
+
+/// Update one or more `@synapse-*` fields in a content.md file. The
+/// `metadata_updater` helper does the byte-level rewrite; we then
+/// rebuild the SQLite index so the UI sees the new values on the
+/// next `get_entries` call.
+///
+/// Validation runs before any file I/O — bad field values are
+/// rejected with `AppError::MetadataInvalidField` and the file is
+/// not modified.
+///
+/// This is the testable inner function; the Tauri command
+/// `update_entry_metadata` is a thin wrapper that just hands off to
+/// here with the `AppState` extracted from `tauri::State`. Splitting
+/// the two lets us unit-test the validation / disk / index logic
+/// without needing a full Tauri invoke handler.
+pub async fn update_entry_metadata_impl(
+    state: &AppState,
+    id: String,
+    changes: crate::parser::metadata_updater::MetadataChanges,
+) -> AppResult<crate::index::StoredEntry> {
+    let _guard = state.write_lock.lock().await;
+
+    // 1) Validate. Empty / out-of-enum values are rejected here so
+    //    we never write a file the validator would immediately flag.
+    if let Some(t) = &changes.title {
+        if t.trim().is_empty() {
+            return Err(AppError::MetadataInvalidField {
+                field: "title".to_string(),
+                reason: "must not be empty".to_string(),
+            });
+        }
+        if t.len() > 200 {
+            return Err(AppError::MetadataInvalidField {
+                field: "title".to_string(),
+                reason: "must be ≤ 200 chars".to_string(),
+            });
+        }
+    }
+    if let Some(tags) = &changes.tags {
+        if tags.len() > 15 {
+            return Err(AppError::MetadataInvalidField {
+                field: "tags".to_string(),
+                reason: "must be ≤ 15".to_string(),
+            });
+        }
+        for tag in tags {
+            if tag.contains(',') {
+                return Err(AppError::MetadataInvalidField {
+                    field: "tags".to_string(),
+                    reason: format!("tag '{tag}' contains a comma"),
+                });
+            }
+            if tag.len() > 50 {
+                return Err(AppError::MetadataInvalidField {
+                    field: "tags".to_string(),
+                    reason: format!("tag '{tag}' exceeds 50 chars"),
+                });
+            }
+        }
+    }
+    if let Some(labels) = &changes.labels {
+        for label in labels {
+            if label.contains(',') {
+                return Err(AppError::MetadataInvalidField {
+                    field: "labels".to_string(),
+                    reason: format!("label '{label}' contains a comma"),
+                });
+            }
+        }
+    }
+    if let Some(status) = &changes.status {
+        if !["draft", "stable", "wip", "deprecated"].contains(&status.as_str()) {
+            return Err(AppError::MetadataInvalidField {
+                field: "status".to_string(),
+                reason: format!("status '{status}' not in enum"),
+            });
+        }
+    }
+
+    // 2) Resolve the entry's on-disk path.
+    let path = {
+        let idx = state.index.read().await;
+        idx.get_entry_path(&id)?
+            .ok_or_else(|| AppError::EntryNotFound { id: id.clone() })?
+    };
+
+    // 3) Rewrite the @synapse-* comments.
+    crate::parser::metadata_updater::apply_metadata_changes(&path, &changes)?;
+
+    // 4) Rebuild the index so the DB reflects the new file content.
+    let kb_root = kb_root_or_err(state).await?;
+    {
+        let idx = state.index.read().await;
+        let _ = idx.rebuild(&kb_root); // best-effort; UI re-fetches on next load
+    }
+
+    // 5) Return the freshly-indexed entry to the caller (avoids a
+    //    second round-trip from the frontend).
+    let idx = state.index.read().await;
+    let entries = idx.get_all_entries()?;
+    entries
+        .into_iter()
+        .find(|e| e.id == id)
+        .ok_or_else(|| AppError::EntryNotFound { id })
+}
+
+/// Tauri command wrapper for `update_entry_metadata_impl`. The
+/// frontend's `EntryMetadataEditor` calls this when a metadata field
+/// blurs. Validation rejects bad values before any file I/O.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn update_entry_metadata(
+    state: State<'_, AppState>,
+    id: String,
+    changes: crate::parser::metadata_updater::MetadataChanges,
+) -> AppResult<crate::index::StoredEntry> {
+    update_entry_metadata_impl(&state, id, changes).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::metadata_updater::MetadataChanges;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1358,5 +1478,109 @@ End of note.
 
         // Mixed separators also collapse.
         assert_eq!(compute("compliance\\legal/sub", "x"), "compliance-legal-sub-x");
+    }
+
+    // ---------- update_entry_metadata (Task 6) ----------
+
+    /// Field validation rejects an empty title before any file I/O
+    /// happens. Pre-fix this used to write an empty `@synapse-title:`
+    /// line to disk, which the validator would then catch as E3.
+    #[tokio::test]
+    async fn update_metadata_rejects_empty_title() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::write(
+            kb_root.join("note.md"),
+            "<!-- @synapse-id: note -->\n<!-- @synapse-title: T -->\n",
+        )
+        .unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+
+        let err = update_entry_metadata_impl(
+            &state,
+            "note".to_string(),
+            MetadataChanges {
+                title: Some("".to_string()),
+                tags: None,
+                labels: None,
+                status: None,
+            },
+        )
+        .await
+        .expect_err("empty title must be rejected");
+        let msg = format!("{err}");
+        assert!(msg.starts_with("metadata-invalid-field:"), "got: {msg}");
+    }
+
+    /// Tag containing a comma is rejected — the CSV format would
+    /// silently split it into two tags.
+    #[tokio::test]
+    async fn update_metadata_rejects_tag_with_comma() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::write(
+            kb_root.join("note.md"),
+            "<!-- @synapse-id: note -->\n<!-- @synapse-title: T -->\n<!-- @synapse-tags: a -->\n",
+        )
+        .unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+
+        let err = update_entry_metadata_impl(
+            &state,
+            "note".to_string(),
+            MetadataChanges {
+                title: None,
+                tags: Some(vec!["ok".to_string(), "has,comma".to_string()]),
+                labels: None,
+                status: None,
+            },
+        )
+        .await
+        .expect_err("tag with comma must be rejected");
+    }
+
+    /// Happy path: title change writes to disk and the command
+    /// returns the freshly-reindexed entry. The file on disk must
+    /// reflect the new `@synapse-title` value.
+    #[tokio::test]
+    async fn update_metadata_writes_title_and_updates_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::write(
+            kb_root.join("note.md"),
+            "<!-- @synapse-id: note -->\n<!-- @synapse-title: Old -->\n<!-- @synapse-tags: type:note -->\n# Note\n",
+        )
+        .unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+
+        // Rebuild so the index knows about the on-disk file. The
+        // command needs `get_entry_path` to resolve `id` → path; the
+        // empty DB would return None and trip `EntryNotFound` first.
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        let result = update_entry_metadata_impl(
+            &state,
+            "note".to_string(),
+            MetadataChanges {
+                title: Some("New".to_string()),
+                tags: None,
+                labels: None,
+                status: None,
+            },
+        )
+        .await
+        .expect("update should succeed");
+
+        // File on disk updated — the @synapse-title line must reflect the new value.
+        let on_disk = std::fs::read_to_string(kb_root.join("note.md")).unwrap();
+        assert!(on_disk.contains("<!-- @synapse-title: New -->"), "disk: {on_disk}");
+        assert!(!on_disk.contains("Old"), "old title must be replaced, not duplicated: {on_disk}");
+
+        // Returned entry matches the on-disk id (title comes from the
+        // first `# heading` in flat-md format, which is still "Note").
+        assert_eq!(result.id, "note");
     }
 }
