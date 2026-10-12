@@ -14,7 +14,8 @@ export function EntryMetadataEditor({ entry }: Props) {
   const updateMetadata = useAppStore((s) => s.updateMetadata);
 
   // Local controlled state mirrors entry, so rapid edits don't fight
-  // a stale entry prop. We sync from entry on entry.id change.
+  // a stale entry prop. The component remounts when the parent passes a
+  // new entry, so we don't need to sync on entry.id change.
   const [title, setTitle] = useState(entry.title);
   const [tags, setTags] = useState<string[]>(entry.tags);
   const [labels, setLabels] = useState<string[]>(entry.labels);
