@@ -31,7 +31,7 @@ export default function App() {
       <main className="relative flex-1">
         <ErrorBar errorCount={errorCount} warningCount={warningCount} />
         {error && (
-          <div className="absolute left-4 right-4 top-4 z-10 rounded-md bg-red-50 p-3 text-sm text-red-700 shadow-sm">
+          <div className="absolute left-4 right-4 top-14 z-10 rounded-md bg-red-50 p-3 text-sm text-red-700 shadow-sm">
             {error}
           </div>
         )}
