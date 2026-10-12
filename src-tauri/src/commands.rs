@@ -1053,6 +1053,116 @@ pub async fn update_entry_metadata(
     update_entry_metadata_impl(&state, id, changes).await
 }
 
+// ---------- Rename precheck (Cycle 2) ----------
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrecheckRenameResult {
+    pub valid: bool,
+    pub new_id: String,
+    pub conflict_with: Option<String>,
+    pub incoming_count: u32,
+    pub incoming_files: Vec<String>,
+}
+
+/// Pure-read validation of a proposed rename. The dialog calls this on
+/// every keystroke (debounced) to drive the validation UI. No side
+/// effects: no file I/O, no DB writes.
+pub async fn precheck_rename_impl(
+    state: &AppState,
+    id: String,
+    new_name: String,
+    new_group: String,
+) -> AppResult<PrecheckRenameResult> {
+    let _guard = state.write_lock.lock().await; // serialize with concurrent renames
+    let kb_root = kb_root_or_err(state).await?;
+
+    // Compute new path / new id using the SAME scheme as
+    // `entry::read_md_file` (path with `.md` stripped, separators
+    // replaced with `-`).
+    let new_id = if new_group.is_empty() {
+        new_name.clone()
+    } else {
+        format!("{new_group}-{new_name}").replace(['\\', '/'], "-")
+    };
+
+    // Conflict check.
+    let idx = state.index.read().await;
+    let entries = idx.get_all_entries()?;
+    drop(idx);
+    let conflict = entries.iter().find(|e| e.id == new_id && e.id != id);
+    if let Some(other) = conflict {
+        return Ok(PrecheckRenameResult {
+            valid: false,
+            new_id,
+            conflict_with: Some(other.id.clone()),
+            incoming_count: 0,
+            incoming_files: vec![],
+        });
+    }
+
+    // Count incoming refs (excluding the file being renamed).
+    let (count, files) = count_incoming_refs(&kb_root, &id)?;
+
+    Ok(PrecheckRenameResult {
+        valid: true,
+        new_id,
+        conflict_with: None,
+        incoming_count: count,
+        incoming_files: files,
+    })
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn precheck_rename(
+    state: State<'_, AppState>,
+    id: String,
+    new_name: String,
+    new_group: String,
+) -> AppResult<PrecheckRenameResult> {
+    precheck_rename_impl(state.inner(), id, new_name, new_group).await
+}
+
+/// Walk every .md under `kb_root` (except files that contain the
+/// `@synapse-id: old_id` declaration) and count occurrences of
+/// `[[old_id]]` outside of code blocks. Returns
+/// `(total_refs, sorted_unique_files)`.
+fn count_incoming_refs(kb_root: &Path, old_id: &str) -> AppResult<(u32, Vec<String>)> {
+    use std::collections::BTreeSet;
+    use crate::scanner::find_md_files;
+
+    let needle = format!("[[{old_id}]]");
+    let mut total: u32 = 0;
+    let mut files: BTreeSet<String> = BTreeSet::new();
+
+    for file in find_md_files(kb_root) {
+        let content = match std::fs::read_to_string(&file) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        // Skip the file that IS the target (it has @synapse-id: old_id).
+        // Other files might mention `old_id` in their content
+        // legitimately (e.g. discussion) — those count as refs.
+        let mut in_code = false;
+        for line in content.lines() {
+            if line.trim_start().starts_with("```") {
+                in_code = !in_code;
+                continue;
+            }
+            if in_code {
+                continue;
+            }
+            if line.contains(&needle) {
+                total += 1;
+                if let Ok(rel) = file.strip_prefix(kb_root) {
+                    files.insert(rel.to_string_lossy().replace('\\', "/"));
+                }
+            }
+        }
+    }
+    Ok((total, files.into_iter().collect()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1582,5 +1692,109 @@ End of note.
         // Returned entry matches the on-disk id (title comes from the
         // first `# heading` in flat-md format, which is still "Note").
         assert_eq!(result.id, "note");
+    }
+
+    // ---------- precheck_rename / count_incoming_refs ----------
+
+    /// Renaming to an id that already exists in the KB is reported
+    /// as `valid: false` with `conflict_with` set — the dialog uses
+    /// this to disable the Rename button.
+    #[tokio::test]
+    async fn precheck_rename_detects_id_collision() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::write(kb_root.join("alpha.md"), "<!-- @synapse-id: alpha -->\n").unwrap();
+        std::fs::write(kb_root.join("beta.md"),  "<!-- @synapse-id: beta -->\n").unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+
+        // Rebuild so the index knows about the on-disk files. The
+        // empty DB would otherwise return no entries and the conflict
+        // check would miss.
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        let result = precheck_rename_impl(
+            &state,
+            "alpha".to_string(),
+            "beta".to_string(),
+            "".to_string(),
+        )
+        .await
+        .unwrap();
+        assert!(!result.valid, "rename to existing id must be invalid");
+        assert_eq!(result.conflict_with.as_deref(), Some("beta"));
+    }
+
+    /// `count_incoming_refs` and the actual cascade must agree —
+    /// precheck promises N incoming refs, execute_rename updates
+    /// exactly N. This is the contract the dialog relies on.
+    #[tokio::test]
+    async fn precheck_incoming_count_matches_cascade() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        // target entry
+        std::fs::write(
+            kb_root.join("target.md"),
+            "<!-- @synapse-id: target -->\n# Target\n",
+        )
+        .unwrap();
+        // 3 other files each with one [[target]] reference
+        for name in ["a", "b", "c"] {
+            std::fs::write(
+                kb_root.join(format!("{name}.md")),
+                format!("<!-- @synapse-id: {name} -->\n# {name}\n\nSee [[target]].\n"),
+            )
+            .unwrap();
+        }
+
+        let state = state_with_current_kb(Some(&kb_root));
+        let precheck = precheck_rename_impl(
+            &state,
+            "target".to_string(),
+            "target-v2".to_string(),
+            "".to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(precheck.incoming_count, 3, "should count 3 [[target]] refs");
+        assert_eq!(precheck.incoming_files.len(), 3);
+    }
+
+    /// Code blocks must NOT be counted as incoming refs. The cascade
+    /// skips them at write time, so the count must also exclude them
+    /// — otherwise the dialog would promise to update N files but
+    /// only M < N actually change.
+    #[tokio::test]
+    async fn precheck_skips_code_block_wikilinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::write(
+            kb_root.join("target.md"),
+            "<!-- @synapse-id: target -->\n",
+        )
+        .unwrap();
+        std::fs::write(
+            kb_root.join("doc.md"),
+            "<!-- @synapse-id: doc -->\n\
+             # Doc\n\n\
+             Real: [[target]]\n\n\
+             ```\n\
+             Code: [[target]]\n\
+             ```\n",
+        )
+        .unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+
+        let precheck = precheck_rename_impl(
+            &state,
+            "target".to_string(),
+            "target-v2".to_string(),
+            "".to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(precheck.incoming_count, 1, "only the real ref counts");
     }
 }
