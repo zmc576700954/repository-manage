@@ -163,4 +163,107 @@ mod tests {
             "expected exactly one @synapse-title line, got {title_count}:\n{content}"
         );
     }
+
+    #[test]
+    fn preserves_unrelated_content() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("note.md");
+        let body = "<!-- @synapse-id: note -->\n<!-- @synapse-title: T -->\n\
+                    <!-- @synapse-tags: type:note -->\n\n\
+                    # Note\n\nSome **bold** and `code`.\n\n- [[other]]\n- [web](https://x.com)\n";
+        fs::write(&path, body).unwrap();
+
+        apply_metadata_changes(
+            &path,
+            &MetadataChanges {
+                title: Some("New".to_string()),
+                tags: None,
+                labels: None,
+                status: None,
+            },
+        )
+        .unwrap();
+
+        let after = fs::read_to_string(&path).unwrap();
+        assert!(after.contains("Some **bold** and `code`."), "markdown body must be preserved");
+        assert!(after.contains("- [[other]]"), "wikilink must be preserved");
+        assert!(after.contains("[web](https://x.com)"), "markdown link must be preserved");
+        // Line ending must be preserved (one trailing \n on body section).
+        assert!(after.ends_with("- [web](https://x.com)\n"), "trailing newline must be preserved");
+    }
+
+    #[test]
+    fn inserts_new_field_when_comment_missing() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("note.md");
+        fs::write(
+            &path,
+            "<!-- @synapse-id: note -->\n<!-- @synapse-title: T -->\n# Note\n",
+        )
+        .unwrap();
+
+        apply_metadata_changes(
+            &path,
+            &MetadataChanges {
+                title: None,
+                tags: None,
+                labels: None,
+                status: Some("draft".to_string()),
+            },
+        )
+        .unwrap();
+
+        let after = fs::read_to_string(&path).unwrap();
+        // 应该插在第一个 synapse 行之后（即 id 之后、title 之前）
+        assert!(after.contains("<!-- @synapse-status: draft -->"), "status line not inserted: {after}");
+        // 位置校验：status 行应该在 id 之后、title 之前
+        let id_pos = after.find("<!-- @synapse-id:").unwrap();
+        let title_pos = after.find("<!-- @synapse-title:").unwrap();
+        let status_pos = after.find("<!-- @synapse-status:").unwrap();
+        assert!(id_pos < status_pos, "status must come after id (first synapse line)");
+        assert!(status_pos < title_pos, "status must come BEFORE title (inserted after first line, not at end)");
+    }
+
+    #[test]
+    fn tags_replaces_full_csv_not_appends() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("note.md");
+        fs::write(
+            &path,
+            "<!-- @synapse-id: note -->\n<!-- @synapse-tags: a, b, c -->\n",
+        )
+        .unwrap();
+
+        apply_metadata_changes(
+            &path,
+            &MetadataChanges {
+                title: None,
+                tags: Some(vec!["x".to_string(), "y".to_string()]),
+                labels: None,
+                status: None,
+            },
+        )
+        .unwrap();
+
+        let after = fs::read_to_string(&path).unwrap();
+        assert!(after.contains("<!-- @synapse-tags: x, y -->"), "tags not replaced: {after}");
+        assert!(!after.contains("a, b, c"), "old tags still present: {after}");
+    }
+
+    #[test]
+    fn empty_changes_writes_nothing() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("note.md");
+        let body = "<!-- @synapse-id: note -->\n# Note\n";
+        fs::write(&path, body).unwrap();
+
+        apply_metadata_changes(
+            &path,
+            &MetadataChanges { title: None, tags: None, labels: None, status: None },
+        )
+        .unwrap();
+
+        let after = fs::read_to_string(&path).unwrap();
+        assert_eq!(after, body, "no changes should leave file byte-identical");
+    }
 }
