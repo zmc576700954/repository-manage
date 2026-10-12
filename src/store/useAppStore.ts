@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import type { Entry, KBInfo, RelationType } from '@shared/types';
 import { localizeError } from '@/i18n/translateError';
+import { usePanelStore } from './panelStore';
 
 interface AppState {
   entries: Entry[];
@@ -202,11 +203,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   removeKb: async (id) => {
     try {
       await invoke('remove_kb', { id });
-      // The active KB may have just been cleared (Finding #15 makes
-      // remove of the active KB → "no active KB"). Drop any selection
-      // that belonged to the removed KB so the user doesn't see a
-      // dangling reference in the detail panel.
       set({ selectedEntryId: null });
+      usePanelStore.getState().close('detail');  // 同步关闭 detail 面板
       await Promise.all([get().refreshKbs(), get().loadEntries()]);
     } catch (e) {
       set({ error: errMsg(e) });
@@ -234,6 +232,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         activeKbEntryCount: newEntries.length,
         selectedEntryId: stillExists ? prevSelection : null,
       });
+      if (!stillExists) {
+        usePanelStore.getState().close('detail');
+      }
     } catch (e) {
       set({ error: errMsg(e) });
     }
