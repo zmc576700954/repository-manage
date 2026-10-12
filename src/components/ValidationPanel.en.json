@@ -5,5 +5,9 @@
   "rescan": "Rescan",
   "exportJson": "Export JSON",
   "jumpTo": "Jump to entry",
-  "noIssues": "No issues"
+  "noIssues": "No issues",
+  "groupBySeverity": "Group by severity",
+  "groupByEntry": "Group by entry",
+  "oneClickFix": "One-click fix",
+  "applying": "Applying..."
 }

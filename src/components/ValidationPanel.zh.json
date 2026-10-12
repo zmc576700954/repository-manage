@@ -5,5 +5,9 @@
   "rescan": "重新校验",
   "exportJson": "导出 JSON",
   "jumpTo": "跳转到 entry",
-  "noIssues": "无问题"
+  "noIssues": "无问题",
+  "groupBySeverity": "按严重程度分组",
+  "groupByEntry": "按 entry 分组",
+  "oneClickFix": "一键修复",
+  "applying": "应用中..."
 }
