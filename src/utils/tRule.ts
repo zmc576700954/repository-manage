@@ -10,10 +10,21 @@ export function tRule(
   ruleId: string,
   vars: Record<string, string> = {},
 ): RuleTrans {
-  const title = t(`rule.${ruleId}.title`, { defaultValue: ruleId });
-  const message = t(`rule.${ruleId}.message`, {
+  const titleKey = `rule.${ruleId}.title`;
+  const messageKey = `rule.${ruleId}.message`;
+
+  let title = t(titleKey, { defaultValue: ruleId });
+  if (title === ruleId) {
+    console.warn(`[tRule] missing i18n key: ${titleKey}`);
+  }
+
+  const message = t(messageKey, {
     defaultValue: '',
     ...vars,
   });
+  if (message === '') {
+    console.warn(`[tRule] missing i18n key: ${messageKey}`);
+  }
+
   return { title, message };
 }
