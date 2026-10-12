@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/store/useAppStore';
+import { usePanelStore } from '@/store/panelStore';
 import { RelationDialog } from '@/components/RelationDialog';
 import type { Entry, Relation } from '@shared/types';
 
@@ -99,6 +100,7 @@ export function DetailPanel() {
   const deleteRelation = useAppStore((s) => s.deleteRelation);
   const addInternalReference = useAppStore((s) => s.createRelation);
   const createEntryFromReference = useAppStore((s) => s.createEntryFromReference);
+  const closePanel = usePanelStore((s) => s.close);
 
   const relLabel = (type: string): string => {
     const known = ['reference', 'derived', 'contradicts', 'supersedes', 'extends', 'custom'];
@@ -248,7 +250,7 @@ export function DetailPanel() {
 
   return (
     <>
-      <aside className="flex h-full w-[28rem] max-w-[40vw] flex-col border-l border-gray-200 bg-white">
+      <div className="flex h-full flex-col">
         {/* Header */}
         <div className="flex items-start gap-3 border-b border-gray-200 p-4">
           <div className="min-w-0 flex-1">
@@ -272,7 +274,10 @@ export function DetailPanel() {
             </p>
           </div>
           <button
-            onClick={() => selectEntry(null)}
+            onClick={() => {
+              selectEntry(null);
+              closePanel('detail');
+            }}
             className="shrink-0 rounded-md px-2 py-1 text-sm text-gray-500 hover:bg-gray-100"
             aria-label={t('closeAria')}
           >
@@ -502,14 +507,17 @@ export function DetailPanel() {
               <span className="break-all font-mono">{entry.path}</span>
             </div>
             <button
-              onClick={() => selectEntry(null)}
+              onClick={() => {
+                selectEntry(null);
+                closePanel('detail');
+              }}
               className="mt-3 text-blue-600 hover:underline"
             >
               {t('closeFooter')}
             </button>
           </div>
         </div>
-      </aside>
+      </div>
       {showRelDialog && (
         <RelationDialog fromId={entry.id} onClose={() => setShowRelDialog(false)} />
       )}
