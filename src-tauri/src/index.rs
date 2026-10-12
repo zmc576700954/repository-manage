@@ -552,6 +552,16 @@ impl Index {
                 .or_insert_with(|| e.id.clone());
         }
 
+        // 为每个 entry 跑校验规则，让 RawEntry.validation 有数据。
+        // 这样 `error_count` / `warning_count` 才能正确写入 DB。
+        let entries: Vec<RawEntry> = entries
+            .into_iter()
+            .map(|mut e| {
+                e.validation = crate::validator::rules::check_all(&e, kb_root, &id_set);
+                e
+            })
+            .collect();
+
         // Pass 1: collect + insert entries in a single transaction. Pre-fix,
 // `for e in &entries { self.upsert_entry(e)?; }` acquired the mutex per
 // entry and ran each INSERT outside a transaction — 1000 entries × ~5
