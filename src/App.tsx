@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Sidebar } from '@/components/Sidebar';
 import { ErrorBar } from '@/components/ErrorBar';
+import { FixDrawer } from '@/components/FixDrawer';
 import { MapView } from '@/views/MapView';
 import { useAppStore } from '@/store/useAppStore';
 import { usePanelStore } from '@/store/panelStore';
@@ -15,6 +16,9 @@ export default function App() {
   const isLoading = useAppStore((s) => s.isLoading);
   const activeKbId = useAppStore((s) => s.activeKbId);
   const entries = useAppStore((s) => s.entries);
+  const activeKbRoot = useAppStore((s) =>
+    s.kbs.find((k) => k.id === s.activeKbId)?.path ?? null
+  );
 
   useEffect(() => {
     refreshKbs().then(() => loadEntries());
@@ -54,6 +58,7 @@ export default function App() {
         )}
       </main>
       <RightPanelStack />
+      <FixDrawer activeKbRoot={activeKbRoot} />
     </div>
   );
 }
