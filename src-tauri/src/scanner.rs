@@ -6,6 +6,7 @@ use walkdir::WalkDir;
 
 /// 扫描根目录，找出所有条目文件夹。
 /// 条目文件夹 = 含 content.md 的子目录。
+/// 跳过 `.synapse-migrate-backup-*` / `.synapse-migrate.log` 等迁移产物。
 pub fn find_entry_dirs(root: &Path) -> Vec<PathBuf> {
     let mut entries = Vec::new();
 
@@ -19,7 +20,7 @@ pub fn find_entry_dirs(root: &Path) -> Vec<PathBuf> {
         .filter_map(Result::ok)
     {
         let path = entry.path();
-        if path.is_dir() && path.join("content.md").exists() {
+        if path.is_dir() && path.join("content.md").exists() && !is_artifact(path) {
             entries.push(path.to_path_buf());
         }
     }
@@ -28,7 +29,7 @@ pub fn find_entry_dirs(root: &Path) -> Vec<PathBuf> {
 }
 
 /// 扫描 KB 根目录下所有 .md 文件（不限层级，最多 5 层防过深）。
-/// 用于"每个 .md 文件就是一个 entry"的平铺 KB 格式。
+/// 跳过 `.synapse-migrate-backup-*` / `.synapse-migrate.log`。
 pub fn find_md_files(root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
     if !root.exists() {
@@ -45,11 +46,24 @@ pub fn find_md_files(root: &Path) -> Vec<PathBuf> {
                 .and_then(|s| s.to_str())
                 .map(|s| s.eq_ignore_ascii_case("md"))
                 .unwrap_or(false)
+            && !is_artifact(p)
         {
             files.push(p.to_path_buf());
         }
     }
     files
+}
+
+/// 路径是否为迁移产物（备份 / 日志），需要从 KB 扫描中排除。
+fn is_artifact(path: &Path) -> bool {
+    for ancestor in path.ancestors() {
+        if let Some(name) = ancestor.file_name().and_then(|n| n.to_str()) {
+            if name.starts_with(".synapse-migrate-backup-") || name == ".synapse-migrate.log" {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// 提取条目的 ID（相对于 root 的目录名）。
