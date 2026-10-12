@@ -55,6 +55,20 @@ pub fn update_position(kb_root: &Path, entry_id: &str, x: f64, y: f64) -> std::i
     save_layout(kb_root, &layout)
 }
 
+/// 将节点的位置从一个 entry id 转移到另一个 entry id。由
+/// `execute_rename` 使用——重命名节点后，节点仍在用户放置的位置。
+/// 如果旧 id 没有位置记录，这是一个静默的 no-op（新 id 也缺席）。
+/// 如果新 id 已经有位置，则保留现有的位置——不会覆盖现有的布局项。
+pub fn rename_key(kb_root: &Path, old_id: &str, new_id: &str) -> std::io::Result<()> {
+    let mut layout = load_layout(kb_root);
+    if let Some(pos) = layout.positions.remove(old_id) {
+        // 仅在新 id 不存在时设置（不覆盖）。
+        layout.positions.entry(new_id.to_string()).or_insert(pos);
+        save_layout(kb_root, &layout)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,5 +117,61 @@ mod tests {
 
         let layout = load_layout(dir.path());
         assert!(layout.positions.is_empty());
+    }
+
+    /// `rename_key` is the layout half of `execute_rename`. The user
+    /// expects the node to stay where it was after renaming, so we
+    /// transfer the position data from the old id to the new id
+    /// atomically (single layout file write).
+    #[test]
+    fn rename_key_transfers_position() {
+        let dir = tempdir().unwrap();
+        let kb_root = dir.path();
+
+        update_position(kb_root, "react-hooks", 100.0, 200.0).unwrap();
+
+        rename_key(kb_root, "react-hooks", "react-hooks-v2").unwrap();
+
+        let layout = load_layout(kb_root);
+        assert!(layout.get("react-hooks").is_none(), "old key must be gone");
+        let new_pos = layout.get("react-hooks-v2").expect("new key must exist");
+        assert_eq!(new_pos.x, 100.0);
+        assert_eq!(new_pos.y, 200.0);
+    }
+
+    /// If the old key didn't have a position (it was never moved from
+    /// the default group layout), `rename_key` is a silent no-op —
+    /// the new id is also absent. The next time the user moves the
+    /// node, the new id gets its position naturally.
+    #[test]
+    fn rename_key_unknown_old_key_is_noop() {
+        let dir = tempdir().unwrap();
+        let kb_root = dir.path();
+
+        // No position recorded for "missing".
+        rename_key(kb_root, "missing", "new-name").unwrap();
+
+        let layout = load_layout(kb_root);
+        assert!(layout.get("missing").is_none());
+        assert!(layout.get("new-name").is_none(), "no-op must not invent a position");
+    }
+
+    /// Renaming to an id that already has a position: the existing
+    /// position wins (we don't clobber the user's previous layout for
+    /// the target). Old key is dropped.
+    #[test]
+    fn rename_key_target_existing_keeps_existing_position() {
+        let dir = tempdir().unwrap();
+        let kb_root = dir.path();
+
+        update_position(kb_root, "src", 1.0, 1.0).unwrap();
+        update_position(kb_root, "old-id", 5.0, 5.0).unwrap();
+
+        rename_key(kb_root, "old-id", "src").unwrap();
+
+        let layout = load_layout(kb_root);
+        let pos = layout.get("src").unwrap();
+        assert_eq!(pos.x, 1.0, "existing position must be preserved");
+        assert!(layout.get("old-id").is_none());
     }
 }
