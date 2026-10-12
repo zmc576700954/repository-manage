@@ -13,6 +13,7 @@ const TITLE_KEY: Record<PanelType, string> = {
   validation: 'titleValidation',
   settings: 'titleSettings',
   filter: 'titleFilter',
+  fix: 'titleFix',
 };
 
 export const RightPanel: React.FC<Props> = ({ type, onClose, children }) => {
