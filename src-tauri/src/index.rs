@@ -350,6 +350,83 @@ impl Index {
         Ok(n)
     }
 
+    /// Atomically move an entry's primary key from `old` to `new` and
+    /// cascade the change to every relation edge whose `from_id` or
+    /// `to_id` pointed at `old`. Returns `rusqlite::Error` on:
+    ///   * `new` already exists (UNIQUE violation) — caller can map to
+    ///     `AppError::RenameConflict`
+    ///   * `old` doesn't exist (no rows updated) — caller can map to
+    ///     `AppError::EntryNotFound`
+    ///
+    /// Wrapped in a transaction so partial state can never leak
+    /// (e.g. relation edges migrated but the entry row not, or vice
+    /// versa).
+    ///
+    /// Implementation: direct `UPDATE` on every table's FK column,
+    /// not a DELETE + INSERT pattern. The schema's tags/attachments
+    /// have `FOREIGN KEY ... ON DELETE CASCADE` but **no** `ON UPDATE
+    /// CASCADE`, so we update those FK columns explicitly. The entries
+    /// table's `id PRIMARY KEY` UNIQUE constraint catches the
+    /// already-exists case and rolls back the transaction.
+    ///
+    /// This is the SQL half of `execute_rename`. The file-rename half
+    /// happens in the command, which calls this method after the
+    /// filesystem move succeeds.
+    pub fn rename_entry_id(&self, old: &str, new: &str) -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+
+        // Defer FK constraint checking until COMMIT. This SQLite pragma
+        // is per-transaction and resets on commit/rollback. Without it,
+        // the first UPDATE on `relations` would fail because the new
+        // id doesn't exist yet in `entries` — a classic chicken-and-egg
+        // for re-parenting operations. `defer_foreign_keys` lets us do
+        // all UPDATEs in any order; SQLite checks the invariants once,
+        // at COMMIT time.
+        tx.execute_batch("PRAGMA defer_foreign_keys = ON")?;
+
+        // 1) Relation edges: outgoing (from_id) and incoming (to_id)
+        //    both point at `old`. The UNIQUE(from_id, to_id,
+        //    relation_type) constraint means a duplicate edge from
+        //    moving A's edges onto an existing id with the same target
+        //    would fail — which is the right behaviour, because that
+        //    signals a real conflict in the user's intended graph.
+        tx.execute(
+            "UPDATE relations SET from_id = ?1 WHERE from_id = ?2",
+            params![new, old],
+        )?;
+        tx.execute(
+            "UPDATE relations SET to_id = ?1 WHERE to_id = ?2",
+            params![new, old],
+        )?;
+
+        // 2) Tags and attachments FK columns. Schema has no
+        //    `ON UPDATE CASCADE`, so we move the pointers manually
+        //    before changing the parent's primary key.
+        tx.execute(
+            "UPDATE tags SET entry_id = ?1 WHERE entry_id = ?2",
+            params![new, old],
+        )?;
+        tx.execute(
+            "UPDATE attachments SET entry_id = ?1 WHERE entry_id = ?2",
+            params![new, old],
+        )?;
+
+        // 3) The entry's primary key. `id PRIMARY KEY` UNIQUE will
+        //    cause this to fail (and roll back the whole tx) if `new`
+        //    is already taken. `n == 0` means `old` didn't exist.
+        let n = tx.execute(
+            "UPDATE entries SET id = ?1 WHERE id = ?2",
+            params![new, old],
+        )?;
+        if n == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Resolve a single entry's `[[xxx]]` double-links and internal `[text](path)`
     /// markdown links into "reference" relations and insert them. Equivalent to
     /// `rebuild`'s Pass 2 but for one entry, and crucially does NOT wipe the
@@ -1624,5 +1701,88 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM relations", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    // ---------- rename_entry_id: cross-table id migration ----------
+
+    /// `rename_entry_id` is the SQL half of `execute_rename`. It must
+    /// move the entry's primary key + every relation edge whose
+    /// from_id / to_id pointed at the old id, all in one transaction.
+    /// Pre-fix the entry row would be wiped (FK violation) and the
+    /// relations would silently survive under the old id.
+    #[test]
+    fn rename_entry_id_moves_row_and_edges_atomically() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("a.md"), "# A\n").unwrap();
+        fs::write(root.join("b.md"), "# B\n").unwrap();
+        fs::write(root.join("c.md"), "# C\n").unwrap();
+
+        let index = Index::open(&dir.path().join("db.sqlite")).unwrap();
+        index.rebuild(root).unwrap();
+        index.add_relation("a", "b", "reference", None).unwrap();
+        index.add_relation("c", "a", "derived", None).unwrap();
+
+        // Rename A → A2. The outgoing A→B edge must become A2→B, and
+        // the incoming C→A edge must become C→A2.
+        index.rename_entry_id("a", "a2").unwrap();
+
+        let entries = index.get_all_entries().unwrap();
+        let a2 = entries.iter().find(|e| e.id == "a2").expect("a2 must exist");
+        let b  = entries.iter().find(|e| e.id == "b").unwrap();
+        let c  = entries.iter().find(|e| e.id == "c").unwrap();
+        assert!(entries.iter().find(|e| e.id == "a").is_none(), "old id a must be gone");
+
+        // A2's outgoing: A2 → B (was A → B).
+        let a2_out: Vec<&StoredRelation> = a2.relations.iter().filter(|r| r.from_id == "a2").collect();
+        assert_eq!(a2_out.len(), 1, "A2 should have 1 outgoing edge (→B)");
+        assert_eq!(a2_out[0].to_id, "b");
+        assert_eq!(a2_out[0].relation_type, "reference");
+
+        // C's outgoing: C → A2 (was C → A).
+        let c_out: Vec<&StoredRelation> = c.relations.iter().filter(|r| r.from_id == "c").collect();
+        assert_eq!(c_out.len(), 1, "C should still have 1 outgoing edge");
+        assert_eq!(c_out[0].to_id, "a2", "C→A must become C→A2");
+        assert_eq!(c_out[0].relation_type, "derived");
+
+        // B's incoming: A2 → B.
+        let b_in: Vec<&StoredRelation> = b.relations.iter().filter(|r| r.to_id == "b").collect();
+        assert_eq!(b_in.len(), 1);
+        assert_eq!(b_in[0].from_id, "a2");
+    }
+
+    /// Renaming an entry to an id that already exists must fail loudly
+    /// (the SQL transaction's UNIQUE constraint would have rolled it
+    /// back anyway, but we want a typed error, not a rusqlite panic).
+    #[test]
+    fn rename_entry_id_to_existing_id_returns_error() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("a.md"), "# A\n").unwrap();
+        fs::write(root.join("b.md"), "# B\n").unwrap();
+        let index = Index::open(&dir.path().join("db.sqlite")).unwrap();
+        index.rebuild(root).unwrap();
+
+        let result = index.rename_entry_id("a", "b");
+        assert!(result.is_err(), "rename to existing id must fail");
+        // A must still be there with original row.
+        let entries = index.get_all_entries().unwrap();
+        assert!(entries.iter().any(|e| e.id == "a"), "A must survive failed rename");
+        assert!(entries.iter().any(|e| e.id == "b"), "B must be untouched");
+    }
+
+    /// Renaming a non-existent id is a no-op returning an error, so
+    /// the command can decide whether to surface it. (Some callers
+    /// will precheck and never hit this path; others may not.)
+    #[test]
+    fn rename_entry_id_unknown_old_id_returns_error() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("a.md"), "# A\n").unwrap();
+        let index = Index::open(&dir.path().join("db.sqlite")).unwrap();
+        index.rebuild(root).unwrap();
+
+        let result = index.rename_entry_id("missing", "newid");
+        assert!(result.is_err(), "unknown old id must fail");
     }
 }
