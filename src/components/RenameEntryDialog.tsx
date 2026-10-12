@@ -37,6 +37,7 @@ export function RenameEntryDialog({
   const [precheck, setPrecheck] = useState<PrecheckState>({ kind: 'idle' });
   const [submitting, setSubmitting] = useState(false);
   const debounceRef = useRef<number | null>(null);
+  const requestIdRef = useRef(0);
 
   // Debounced precheck whenever name or group changes.
   useEffect(() => {
@@ -51,8 +52,10 @@ export function RenameEntryDialog({
     setPrecheck({ kind: 'checking' });
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(async () => {
+      const myId = ++requestIdRef.current;
       try {
         const result = await precheckRename(entryId, newName.trim(), newGroup.trim());
+        if (myId !== requestIdRef.current) return;
         if (result.conflictWith) {
           setPrecheck({ kind: 'conflict', conflict: result.conflictWith });
         } else if (result.valid) {
@@ -61,6 +64,7 @@ export function RenameEntryDialog({
           setPrecheck({ kind: 'error', message: t('errorInvalidName') });
         }
       } catch (e) {
+        if (myId !== requestIdRef.current) return;
         setPrecheck({ kind: 'error', message: (e as Error).message });
       }
     }, 200);
