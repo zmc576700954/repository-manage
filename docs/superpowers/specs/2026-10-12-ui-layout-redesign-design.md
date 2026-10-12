@@ -129,9 +129,9 @@ export const usePanelStore = create<PanelState>((set, get) => ({
     if (openPanels.length >= MAX_PANELS) {
       const evicted = openPanels[0];
       const next = [...openPanels.slice(1), panel];
+      // 处理 evict 副作用（详见 §2.4）
+      handleEviction(evicted);
       set({ openPanels: next });
-      // 同时清掉 evicted 对应的状态（如 detail 的 selectedEntryId）
-      onPanelEvicted?.(evicted);
     } else {
       set({ openPanels: [...openPanels, panel] });
     }
@@ -166,24 +166,27 @@ DetailPanel 的可见性由 `panelStore.openPanels` 中是否包含 `'detail'` �
 
 ### 2.4 收回联动（FIFO 副作用）
 
-`open()` 调用 `onPanelEvicted?.(evicted)` 回调，需要 store 暴露订阅点，或在 store 内直接处理：
+在 `panelStore` 文件内定义内部函数 `handleEviction`：
 
 ```typescript
-open: (panel) => {
-  // ... 同上
-  if (openPanels.length >= MAX_PANELS) {
-    const evicted = openPanels[0];
-    if (evicted === 'detail') {
-      useAppStore.getState().selectEntry(null);
-    }
-    // Validation / Settings / Filter 无副作用
-    set({ openPanels: [...openPanels.slice(1), panel] });
+import { useAppStore } from './useAppStore';
+
+function handleEviction(evicted: PanelType) {
+  // 仅 detail 面板有需要清理的关联状态（selectedEntryId）
+  if (evicted === 'detail') {
+    useAppStore.getState().selectEntry(null);
   }
-  // ...
+  // Validation / Settings / Filter 自身无外部状态，无需清理
 }
 ```
 
-通过 `useAppStore.getState()` 直接访问避免循环依赖。
+通过 `useAppStore.getState()` 直接访问避免循环依赖（`useAppStore` 内不依赖 `usePanelStore`）。
+
+**完整调用顺序**（开第 4 个面板时）：
+1. 检查 `openPanels.length >= MAX_PANELS`
+2. 取出 `evicted = openPanels[0]`
+3. `handleEviction(evicted)`（清掉 evict 关联状态）
+4. `set({ openPanels: [...openPanels.slice(1), panel] })`
 
 ---
 
@@ -375,9 +378,25 @@ const handleSelectRelated = (id: string) => {
 };
 ```
 
-### 5.3 关联 entry 被删除
+### 5.3 KB 切换 / 删除时的联动
 
-`useAppStore.setActiveKb` 已处理：若新 KB 不包含旧 selection 则 `selectEntry(null)`。补充：在 `useAppStore.removeKb` 后增加：
+`useAppStore.setActiveKb` 已处理：若新 KB 不包含旧 selection 则 `selectEntry(null)`。**补充**：同时关闭 detail 面板：
+
+```typescript
+setActiveKb: async (id) => {
+  // ... 原有逻辑 ...
+  set({
+    entries: newEntries,
+    activeKbEntryCount: newEntries.length,
+    selectedEntryId: stillExists ? prevSelection : null,
+  });
+  if (!stillExists) {
+    usePanelStore.getState().close('detail');  // 补充：同步关闭 detail 面板
+  }
+},
+```
+
+`useAppStore.removeKb` 同样补充：
 
 ```typescript
 removeKb: async (id) => {
@@ -436,7 +455,7 @@ Sidebar 右上角 ⚙ 按钮：
 onClick={() => usePanelStore.getState().open('settings')}
 ```
 
-App.tsx 顶部 "打开知识库" 按钮（如果保留）同样改为开 settings 面板。
+**App.tsx 顶部 "打开知识库" 按钮移除**：当前 `App.tsx` 顶部右上有一个 `{t('openKbButton')}` 按钮，与 Sidebar 内的 ⚙ 按钮功能重复。本次重构删除该按钮，仅保留 Sidebar 的 ⚙。
 
 ---
 
@@ -444,11 +463,11 @@ App.tsx 顶部 "打开知识库" 按钮（如果保留）同样改为开 setting
 
 | 文件 | 变更 |
 |------|------|
-| `App.zh/en.json` | `openKbButton` 可移除（改用 Sidebar 内 ⚙ 按钮）或保留为面板标题 |
-| `ErrorBar.zh/en.json` | 移除 `clickToView`、`errors`、`warnings`；新增 `tooltip` |
+| `App.zh/en.json` | 删除 `openKbButton`（按钮已移除）；保留 `loading` / `noActiveKb` / `openKbAction`（仍用于激活 KB 引导） |
+| `ErrorBar.zh/en.json` | 删除 `errors`、`warnings`、`clickToView`；新增 `tooltip` |
 | `RightPanel.zh/en.json` | 新建：`titleDetail / titleValidation / titleSettings / titleFilter` |
-| `Sidebar.zh/en.json` | `manageKbTitle` 文案微调（仍为 "管理知识库"） |
-| `DetailPanel.zh/en.json` | 无内容变更，仅引用方式变化 |
+| `Sidebar.zh/en.json` | 无变更（`manageKbTitle` 文案沿用） |
+| `DetailPanel.zh/en.json` | 无内容变更 |
 
 `src/i18n/resources.ts` 需注册新命名空间 `RightPanel`。
 
