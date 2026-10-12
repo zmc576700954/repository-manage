@@ -4,6 +4,7 @@ import { useAppStore } from '@/store/useAppStore';
 import { usePanelStore } from '@/store/panelStore';
 import { EntryDialog, type EntryDialogMode } from '@/components/EntryDialog';
 import type { Entry } from '@shared/types';
+import { SearchBox } from '@/search/SearchBox';
 
 interface GroupNode {
   kind: 'group';
@@ -117,6 +118,7 @@ export function Sidebar() {
             {t('reloadButton')}
           </button>
         ) : null}
+        <SearchBox />
       </div>
 
       <div className="flex-1 overflow-y-auto p-2">
