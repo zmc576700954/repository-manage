@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import type { Entry, KBInfo, RelationType } from '@shared/types';
+import type { Entry, KBInfo, MetadataChanges, PrecheckRenameResult, RelationType, RenameResult, StoredEntry } from '@shared/types';
 import { localizeError } from '@/i18n/translateError';
 import { usePanelStore } from './panelStore';
 
@@ -44,6 +44,11 @@ interface AppState {
   addKb: (name: string, path: string) => Promise<void>;
   removeKb: (id: string) => Promise<void>;
   setActiveKb: (id: string) => Promise<void>;
+
+  // ---------- Inline metadata editing + rename (Cycle 2) ----------
+  updateMetadata: (id: string, changes: MetadataChanges) => Promise<StoredEntry>;
+  precheckRename: (id: string, newName: string, newGroup: string) => Promise<PrecheckRenameResult>;
+  renameEntry: (id: string, newName: string, newGroup: string, cascade: boolean) => Promise<RenameResult>;
 }
 
 /// Read an invoke error and turn it into a user-facing, localized message.
@@ -238,5 +243,65 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (e) {
       set({ error: errMsg(e) });
     }
+  },
+
+  // ---------- Inline metadata editing + rename (Cycle 2) ----------
+
+  /// Optimistic update: mutate the local entries array so the UI
+  /// reflects the new value immediately. On failure we revert.
+  updateMetadata: async (id, changes) => {
+    const prev = get().entries.find((e) => e.id === id);
+    if (!prev) throw new Error(`entry not found: ${id}`);
+    const optimistic: Entry = {
+      ...prev,
+      title: changes.title ?? prev.title,
+      tags: changes.tags ?? prev.tags,
+      labels: changes.labels ?? prev.labels,
+      status: changes.status !== undefined && changes.status !== null ? changes.status : prev.status,
+    };
+    set((s) => ({ entries: s.entries.map((e) => (e.id === id ? optimistic : e)) }));
+
+    try {
+      const updated = await invoke<StoredEntry>('update_entry_metadata', { id, changes });
+      // Reconcile with backend (DB might compute derived fields).
+      set((s) => ({
+        entries: s.entries.map((e) =>
+          e.id === id
+            ? {
+                ...e,
+                id: updated.id,
+                title: updated.title,
+                tags: updated.tags,
+                labels: updated.labels,
+                status: updated.status ?? undefined,
+              }
+            : e
+        ),
+      }));
+      return updated;
+    } catch (e) {
+      // Revert
+      set((s) => ({ entries: s.entries.map((ent) => (ent.id === id ? prev : ent)) }));
+      set({ error: errMsg(e) });
+      throw e;
+    }
+  },
+
+  precheckRename: async (id, newName, newGroup) => {
+    return invoke<PrecheckRenameResult>('precheck_rename', { id, newName, newGroup });
+  },
+
+  renameEntry: async (id, newName, newGroup, cascade) => {
+    const result = await invoke<RenameResult>('execute_rename', { id, newName, newGroup, cascade });
+
+    // Reload all entries (the renamed file's id is now result.newId,
+    // and other entries' content may have changed if cascade=true).
+    await get().loadEntries();
+
+    // If the renamed entry was selected, update selection to new id.
+    if (get().selectedEntryId === id) {
+      set({ selectedEntryId: result.newId });
+    }
+    return result;
   },
 }));
