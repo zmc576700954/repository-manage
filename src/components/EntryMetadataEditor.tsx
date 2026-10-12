@@ -23,18 +23,32 @@ export function EntryMetadataEditor({ entry }: Props) {
   const [tagInput, setTagInput] = useState('');
   const [labelInput, setLabelInput] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const savedAtRef = useRef<number | null>(null);
 
   const commit = useCallback(
     (changes: { title?: string; tags?: string[]; labels?: string[]; status?: string }) => {
       setError(null);
-      return updateMetadata(entry.id, changes).catch((e) => {
-        setError((e as Error).message);
-        // Revert local state on error
-        setTitle(entry.title);
-        setTags(entry.tags);
-        setLabels(entry.labels);
-        setStatus(entry.status ?? 'stable');
-      });
+      return updateMetadata(entry.id, changes)
+        .then(() => {
+          const now = Date.now();
+          savedAtRef.current = now;
+          setSavedAt(now);
+          setTimeout(() => {
+            if (savedAtRef.current === now) {
+              savedAtRef.current = null;
+              setSavedAt(null);
+            }
+          }, 1500);
+        })
+        .catch((e) => {
+          setError((e as Error).message);
+          // Revert local state on error
+          setTitle(entry.title);
+          setTags(entry.tags);
+          setLabels(entry.labels);
+          setStatus(entry.status ?? 'stable');
+        });
     },
     [entry.id, entry.title, entry.tags, entry.labels, entry.status, updateMetadata]
   );
@@ -206,6 +220,7 @@ export function EntryMetadataEditor({ entry }: Props) {
       </div>
 
       {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      {savedAt && <p className="mt-2 text-xs text-green-600">{t('savedFlash')}</p>}
     </div>
   );
 }
