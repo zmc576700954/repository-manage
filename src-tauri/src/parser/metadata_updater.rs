@@ -33,7 +33,7 @@ pub fn apply_metadata_changes(
 fn replace_or_insert(content: &str, field: &str, value: &str) -> String {
     use regex::Regex;
     // 匹配 `<!-- @synapse-{field}: ... -->`（不跨行）
-    let pattern = format!(r"(?m)^(<!-- @synapse-{field}:\s*)([^-]*?)(\s*-->)$");
+    let pattern = format!(r"(?m)^(<!-- @synapse-{field}:\s*)([^\n]*?)(\s*-->)$");
     let re = Regex::new(&pattern).expect("valid regex");
     if let Some(caps) = re.captures(content) {
         // 在原行原地替换
@@ -118,7 +118,8 @@ mod tests {
 
     /// Pin the dash-in-value case: the regex must NOT exclude dashes
     /// from the captured value, otherwise titles like "React - Hooks"
-    /// or tags like "high-priority" silently fail to update.
+    /// or tags like "high-priority" silently fail to update and the
+    /// file ends up with DUPLICATE metadata lines.
     #[test]
     fn update_title_with_dash_in_value() {
         let dir = tempdir().unwrap();
@@ -142,9 +143,24 @@ mod tests {
         .unwrap();
 
         let content = fs::read_to_string(&path).unwrap();
+
+        // 1. The new line is present.
         assert!(
             content.contains("<!-- @synapse-title: React - Hooks 深入 -->"),
-            "title with dashes/spaces/CJK not updated: {content}"
+            "new title not written: {content}"
+        );
+
+        // 2. The old line is gone (replaced, not appended).
+        assert!(
+            !content.contains("Old-Dash-Title"),
+            "old title still present after update: {content}"
+        );
+
+        // 3. Exactly one @synapse-title: line (no duplicate metadata).
+        let title_count = content.matches("<!-- @synapse-title:").count();
+        assert_eq!(
+            title_count, 1,
+            "expected exactly one @synapse-title line, got {title_count}:\n{content}"
         );
     }
 }
