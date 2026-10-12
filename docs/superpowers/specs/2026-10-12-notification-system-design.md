@@ -16,12 +16,11 @@
 当前 Synapse KB 桌面应用的通知系统存在以下问题：
 
 **Bug**：
-1. `ErrorBar.tsx:27` — `warningCount` 写成不存在的 `warningCount`，警告数永远不显示
-2. `ValidationPanel.tsx:34` — `kbRoot: '.'` 硬编码，校验结果永远是空（用的是进程当前目录）
-3. `ValidationPanel.tsx:29` — `useTranslation('validation')` 大小写与注册名 `'Validation'` 不一致
-4. `NodeCard.tsx` 红点仅 `title` tooltip，无点击交互
-5. `tRule.ts` — 找不到 i18n key 时返回空 message，"看不到任何信息"的根因
-6. 校验规则 i18n 覆盖不全：缺 W1/W2/W3 等多规则消息
+1. `ValidationPanel.tsx:34` — `kbRoot: '.'` 硬编码，校验结果永远是空（用的是进程当前目录）
+2. `ValidationPanel.tsx:29` — `useTranslation('validation')` 大小写与注册名 `'Validation'` 不一致
+3. `NodeCard.tsx` 红点仅 `title` tooltip，无点击交互
+4. `tRule.ts` — 找不到 i18n key 时返回空 message，"看不到任何信息"的根因
+5. 校验规则 i18n 覆盖不全：缺 W1/W2/W3 等多规则消息
 
 **用户视角的痛点**：
 - 红点/红条不知道能不能点，点了看不到信息
