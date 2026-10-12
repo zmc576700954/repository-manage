@@ -15,7 +15,7 @@
 | 边界 | #33 #34 #35 | 3/3 |
 | 回归 | R8 | 1/1 |
 
-修复的 8 个 issue（按 commit 顺序）：
+修复的 9 个 issue（按 commit 顺序）：
 - `count_by_severity` 用 `matches!` 绑定模式，恒为 true（61a7026）
 - `@synapse-id` 永远被路径覆盖（5941663）
 - 扫描器 max_depth(3) 阻止 E5 检测深目录（2d2ef0f）
@@ -24,20 +24,23 @@
 - validate-all 只是占位（6b1f8f3）
 - 迁移预览输出 `migrated` 应为 `would_modify`（0845661）
 - E2 对 `_inbox` 等保留前缀应剥离（a73e4e8）
+- 旧 SQLite DB 缺 v2 列（81c1ad5）
+- `entry.validation` 重建时未填充，errorCount 永远 0（f27f99d）
 
-### UI 层（待人工验收，30/48）
+### UI 层（21/48 已通过 / 27/48 待人工）
 
-以下项需要启动 `npm run tauri:dev` 后由维护者人工验证：
+启动 `npm run tauri:dev` 后人工验证：
+- 校验 UI：#9 ✓ #10 ✓ #11 ✓ #13 ✓（#12 跳到 entry 待验）
+- 标签筛选：#15-18 待验
+- 多 KB：#23 #24 待验
+- i18n：#26-28 待验
+- 性能：#29-32 待验
+- 边界：#36-40 待验
+- 回归：R1-7 待验
 
-- 校验 UI：#9 #10 #11 #12 #13 #14
-- 标签筛选：#15 #16 #17 #18
-- 多 KB：#23 #24
-- i18n：#26 #27 #28
-- 性能：#29 #30 #31 #32
-- 边界：#36 #37 #38 #39 #40
-- 回归：R1 R2 R3 R4 R5 R6 R7
+`#9 #10 #11 #13` 已在「跨境电商爬虫」KB 上人工确认（红条 + 徽标 + tooltip + 边色均正常）。
 
-自动化层验证已通过 179 个 Rust 单元测试 + Vite 编译（`npm run build`）。
+待验 UI 项多在右侧面板（Validation / Filter / Settings）和 Sidebar（语言切换 / KB 切换），继续走一遍能验完。
 
 ---
 
@@ -54,11 +57,11 @@
 - [x] #8 写老 @synapse-group: foo → 静默忽略 + W6 警告
 
 ### 校验 UI
-- [ ] #9 故意写 E4 错误 entry → 红边 + 感叹号
-- [ ] #10 悬停感叹号 → tooltip 显示规则详情
-- [ ] #11 顶部红条「X 个错误」 → 点击打开 Validation 面板
+- [x] #9 故意写 E4 错误 entry → 红边 + 感叹号
+- [x] #10 悬停感叹号 → tooltip 显示规则详情
+- [x] #11 顶部红条「X 个错误」 → 点击打开 Validation 面板
 - [ ] #12 Validation 面板「跳到 entry」 → 地图聚焦
-- [ ] #13 故意 W4 → 黄边 + Sidebar 黄点
+- [x] #13 故意 W4 → 黄边 + Sidebar 黄点
 - [ ] #14 Settings → Validation 改 ignore → 重校验后警告消失
 
 ### 标签筛选
