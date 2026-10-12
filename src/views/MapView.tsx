@@ -10,6 +10,7 @@ import 'reactflow/dist/style.css';
 import { useTranslation } from 'react-i18next';
 
 import { useAppStore } from '@/store/useAppStore';
+import { usePanelStore } from '@/store/panelStore';
 import { NodeCard, NodeCardData } from '@/components/NodeCard';
 import type { RelationType } from '@shared/types';
 
@@ -67,6 +68,7 @@ export function MapView() {
   const entries = useAppStore((s) => s.entries);
   const selectEntry = useAppStore((s) => s.selectEntry);
   const relationFilter = useAppStore((s) => s.relationFilter);
+  const openPanel = usePanelStore((s) => s.open);
 
   // 1) 按 group 分桶（保持 group 顺序，按 entries 中首次出现的顺序）
   const groupOrder = useMemo(() => {
@@ -168,8 +170,9 @@ export function MapView() {
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
       selectEntry(node.id);
+      openPanel('detail');
     },
-    [selectEntry]
+    [selectEntry, openPanel]
   );
 
   if (entries.length === 0) {
