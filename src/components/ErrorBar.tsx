@@ -24,9 +24,11 @@ export const ErrorBar: React.FC<Props> = ({ errorCount, warningCount }) => {
       className={`absolute right-4 top-4 z-10 rounded-full px-3 py-1 text-xs shadow-sm transition-colors ${colorClass}`}
       title={t('tooltip', { errors: errorCount, warnings: warningCount })}
     >
-      {isError && `⚠ ${errorCount}`}
-      {isError && warningCount > 0 && ' · '}
-      {!isError && warningCount > 0 && `${warningCount}`}
+      {isError
+        ? `⚠ ${errorCount}${warningCount > 0 ? ` · ${warningCount}` : ''}`
+        : warningCount > 0
+        ? `${warningCount}`
+        : ''}
     </button>
   );
 };
