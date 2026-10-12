@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
+import { useAppStore } from '@/store/useAppStore';
 import { tRule } from '@/utils/tRule';
 
 // Severity serializes from Rust as a unit-variant object (e.g. {"Error": null}).
@@ -27,17 +28,21 @@ const severityKey = (s: Record<Severity, null>): Severity => {
 export const ValidationPanel: React.FC = () => {
   const { t } = useTranslation('ValidationPanel');
   const { t: tVal } = useTranslation('Validation');
+  const activeKbRoot = useAppStore((s) =>
+    s.kbs.find((k) => k.id === s.activeKbId)?.path ?? null
+  );
   const [report, setReport] = useState<ValidationReport | null>(null);
   const [tab, setTab] = useState<Severity>('Error');
 
   const rescan = async () => {
-    const r = await invoke<ValidationReport>('validate_kb', { kbRoot: '.' });
+    if (!activeKbRoot) return;
+    const r = await invoke<ValidationReport>('validate_kb', { kbRoot: activeKbRoot });
     setReport(r);
   };
 
   React.useEffect(() => {
     rescan();
-  }, []);
+  }, [activeKbRoot]);
 
   const filtered = report?.issues.filter((i) => severityKey(i.severity) === tab) ?? [];
 
