@@ -101,7 +101,7 @@ pub fn read_md_file(file: &Path, kb_root: &Path) -> RawEntry {
 /// 从 entry 目录读取并解析完整 Entry 数据。
 /// 如果目录没有 content.md，返回 has_content_md = false 的最小 Entry。
 pub fn read_entry(entry_dir: &Path) -> RawEntry {
-    let id = entry_dir
+    let dir_id = entry_dir
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
@@ -111,8 +111,8 @@ pub fn read_entry(entry_dir: &Path) -> RawEntry {
 
     if !has_content_md {
         return RawEntry {
-            id: id.clone(),
-            title: id.clone(),
+            id: dir_id.clone(),
+            title: dir_id.clone(),
             tags: vec![],
             group: None,
             path: entry_dir.to_path_buf(),
@@ -136,6 +136,7 @@ pub fn read_entry(entry_dir: &Path) -> RawEntry {
     let content = std::fs::read_to_string(&content_path).unwrap_or_default();
 
     let metadata = parse_metadata_comments(&content);
+    let id = metadata.get("id").cloned().unwrap_or_else(|| dir_id.clone());
     let title = metadata
         .get("title")
         .cloned()
