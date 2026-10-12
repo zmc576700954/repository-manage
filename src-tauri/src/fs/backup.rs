@@ -13,6 +13,13 @@ pub struct Backup {
     pub rule_id: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupMeta {
+    original_path: String,
+    rule_id: String,
+}
+
 pub fn backup_dir(kb_root: &Path) -> PathBuf {
     kb_root.join(".synapse-fix-backup")
 }
@@ -51,6 +58,16 @@ pub fn backup_then_write(
 
     std::fs::write(target, new_content)?;
 
+    let meta = BackupMeta {
+        original_path: target.to_string_lossy().into_owned(),
+        rule_id: rule_id.to_string(),
+    };
+    let meta_path = dir.join(format!("{}.meta", id));
+    let meta_json = serde_json::to_vec(&meta).map_err(|e| crate::error::AppError::IoOp {
+        message: format!("serialize backup meta: {}", e),
+    })?;
+    std::fs::write(&meta_path, &meta_json)?;
+
     Ok(Backup {
         id,
         original_path: target.to_path_buf(),
@@ -70,12 +87,16 @@ pub fn list_backups(kb_root: &Path) -> Vec<Backup> {
         let id = name.trim_end_matches(".md").to_string();
         let ts_str = id.split('_').next()?;
         let ts: u64 = ts_str.parse().ok()?;
+        let backup_path = e.path();
+        let meta_path = backup_path.with_extension("meta");
+        let meta_content = std::fs::read(&meta_path).ok()?;
+        let meta: BackupMeta = serde_json::from_slice(&meta_content).ok()?;
         Some(Backup {
             id,
-            original_path: e.path().with_file_name("__placeholder__"),
-            backup_path: e.path(),
+            original_path: PathBuf::from(meta.original_path),
+            backup_path,
             created_at: ts,
-            rule_id: String::new(),
+            rule_id: meta.rule_id,
         })
     }).collect()
 }
@@ -132,5 +153,23 @@ mod tests {
 
         let backups = list_backups(tmp.path());
         assert!(backups.len() >= 2);
+    }
+
+    #[test]
+    fn list_backups_then_restore_writes_to_original() {
+        let tmp = TempDir::new().unwrap();
+        let entry_dir = tmp.path().join("entry1");
+        std::fs::create_dir_all(&entry_dir).unwrap();
+        let target = entry_dir.join("content.md");
+        std::fs::write(&target, "ORIGINAL").unwrap();
+
+        let b = backup_then_write(&target, "NEW", "E1").unwrap();
+        let listed = list_backups(tmp.path());
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].original_path, b.original_path);
+        assert_eq!(listed[0].rule_id, "E1");
+
+        restore_backup(&listed[0]).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "ORIGINAL");
     }
 }
