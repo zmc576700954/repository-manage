@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { initI18n } from './i18n';
 import './styles.css';
 
@@ -10,7 +11,9 @@ async function bootstrap() {
   if (!rootEl) throw new Error('Root element #root not found');
   ReactDOM.createRoot(rootEl).render(
     <React.StrictMode>
-      <App />
+      <ErrorBoundary>
+        <App />
+      </ErrorBoundary>
     </React.StrictMode>
   );
 }

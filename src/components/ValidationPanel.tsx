@@ -97,10 +97,11 @@ export const ValidationPanel: React.FC = () => {
           <div className="text-sm text-gray-500">{t('noIssues')}</div>
         ) : groupBy === 'severity' ? (
           filtered.map((issue, i) => {
+            const safeMessage = typeof issue.message === 'string' ? issue.message : '';
             const { title, message } = tRule(tVal, issue.rule_id, {
               id: issue.entry_id,
-              target: issue.message.match(/\[\[(.+?)\]\]/)?.[1] || '',
-              expected: issue.message.match(/should equal "(.+?)"/)?.[1] || '',
+              target: safeMessage.match(/\[\[(.+?)\]\]/)?.[1] || '',
+              expected: safeMessage.match(/should equal "(.+?)"/)?.[1] || '',
             });
             const key = `${issue.entry_id}::${issue.rule_id}`;
             return (
@@ -135,10 +136,11 @@ export const ValidationPanel: React.FC = () => {
                 <div className="text-xs font-semibold">{entryId}</div>
                 <div className="mt-1 space-y-1">
                   {entryIssues.map((issue, j) => {
+                    const safeMessage = typeof issue.message === 'string' ? issue.message : '';
                     const { title, message } = tRule(tVal, issue.rule_id, {
                       id: issue.entry_id,
-                      target: issue.message.match(/\[\[(.+?)\]\]/)?.[1] || '',
-                      expected: issue.message.match(/should equal "(.+?)"/)?.[1] || '',
+                      target: safeMessage.match(/\[\[(.+?)\]\]/)?.[1] || '',
+                      expected: safeMessage.match(/should equal "(.+?)"/)?.[1] || '',
                     });
                     const key = `${issue.entry_id}::${issue.rule_id}`;
                     return (

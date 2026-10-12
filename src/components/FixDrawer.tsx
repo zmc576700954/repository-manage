@@ -52,7 +52,10 @@ export const FixDrawer: React.FC<Props> = ({ activeKbRoot }) => {
 
   if (!drawerEntryId) return null;
 
-  const errors = issues.filter((i) => 'Error' in i.severity);
+  const errors = Array.isArray(issues)
+    ? issues.filter((i) => i && 'Error' in (i.severity ?? {}))
+    : [];
+  const loading = !activeKbRoot || issues.length === 0;
 
   const applyFix = async (ruleId: string, confirm: boolean) => {
     setBusy(ruleId);
@@ -69,13 +72,27 @@ export const FixDrawer: React.FC<Props> = ({ activeKbRoot }) => {
   };
 
   return (
-    <div className="fixed right-0 top-12 z-50 w-96 max-w-[90vw] rounded-l-lg border border-gray-200 bg-white p-4 shadow-xl">
-      <div className="flex items-center justify-between border-b pb-2">
-        <h3 className="text-sm font-semibold">{t('drawerTitle', { entry: drawerEntryId })}</h3>
-        <button onClick={closeDrawer} className="text-gray-400 hover:text-gray-600">✕</button>
+    <div
+      role="dialog"
+      aria-label={t('drawerTitle', { entry: drawerEntryId ?? '' })}
+      className="fixed right-0 top-12 z-50 flex w-96 max-w-[90vw] flex-col rounded-l-lg border border-gray-200 bg-white shadow-xl"
+    >
+      <div className="flex items-center justify-between border-b px-4 py-2">
+        <h3 className="truncate text-sm font-semibold">
+          {t('drawerTitle', { entry: drawerEntryId ?? '' })}
+        </h3>
+        <button
+          onClick={closeDrawer}
+          aria-label="close"
+          className="rounded px-2 py-1 text-sm text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+        >
+          ✕
+        </button>
       </div>
-      <div className="mt-3 space-y-3">
-        {errors.length === 0 && <div className="text-sm text-gray-500">{t('noErrors')}</div>}
+      <div className="max-h-[70vh] flex-1 space-y-3 overflow-y-auto p-4">
+        {loading && (
+          <div className="text-sm text-gray-500">{t('noErrors')}</div>
+        )}
         {errors.map((issue) => (
           <div key={issue.rule_id} className="rounded border border-red-100 bg-red-50 p-2">
             <div className="text-xs font-medium text-red-700">
@@ -95,6 +112,14 @@ export const FixDrawer: React.FC<Props> = ({ activeKbRoot }) => {
             </div>
           </div>
         ))}
+      </div>
+      <div className="border-t px-4 py-2">
+        <button
+          onClick={closeDrawer}
+          className="w-full rounded-md bg-gray-100 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-200"
+        >
+          {t('backToMap', { defaultValue: '返回地图' })}
+        </button>
       </div>
     </div>
   );
