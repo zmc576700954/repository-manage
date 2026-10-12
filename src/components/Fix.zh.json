@@ -1,0 +1,18 @@
+{
+  "drawerTitle": "修复：{{entry}}",
+  "noErrors": "无错误",
+  "applying": "应用中...",
+  "risk": {
+    "low": "低风险",
+    "medium": "中风险",
+    "high": "高风险"
+  },
+  "kind": {
+    "manual": "需要手动修复"
+  },
+  "common": {
+    "apply": "应用",
+    "openDocs": "查看文档",
+    "failed": "失败：{{reason}}"
+  }
+}

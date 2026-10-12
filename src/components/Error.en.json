@@ -1,0 +1,8 @@
+{
+  "errors_one": "{{count}} error",
+  "errors_other": "{{count}} errors",
+  "warnings_one": "{{count}} warning",
+  "warnings_other": "{{count}} warnings",
+  "clickToView": "Click to view",
+  "tooltipWithCounts": "{{errors}} errors, {{warnings}} warnings"
+}

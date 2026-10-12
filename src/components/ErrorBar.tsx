@@ -8,27 +8,24 @@ interface Props {
 }
 
 export const ErrorBar: React.FC<Props> = ({ errorCount, warningCount }) => {
-  const { t } = useTranslation('ErrorBar');
-  const open = usePanelStore((s) => s.open);
+  const { t } = useTranslation('Error');
+  const { open } = usePanelStore();
 
   if (errorCount === 0 && warningCount === 0) return null;
-
-  const isError = errorCount > 0;
-  const colorClass = isError
-    ? 'bg-red-100 text-red-800 hover:bg-red-200'
-    : 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200';
 
   return (
     <button
       onClick={() => open('validation')}
-      className={`absolute right-4 top-4 z-10 rounded-full px-3 py-1 text-xs shadow-sm transition-colors ${colorClass}`}
-      title={t('tooltip', { errors: errorCount, warnings: warningCount })}
+      className={`block w-full cursor-pointer px-4 py-2 text-left text-sm transition hover:opacity-90 ${
+        errorCount > 0 ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'
+      }`}
+      title={t('tooltipWithCounts', { errors: errorCount, warnings: warningCount })}
     >
-      {isError
-        ? `⚠ ${errorCount}${warningCount > 0 ? ` · ${warningCount}` : ''}`
-        : warningCount > 0
-        ? `${warningCount}`
-        : ''}
+      {errorCount > 0 && t('errors', { count: errorCount })}
+      {errorCount > 0 && warningCount > 0 && ' · '}
+      {warningCount > 0 && t('warnings', { count: warningCount })}
+      {' — '}
+      {t('clickToView')}
     </button>
   );
 };

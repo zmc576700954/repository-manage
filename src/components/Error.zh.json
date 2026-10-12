@@ -1,0 +1,8 @@
+{
+  "errors_one": "{{count}} 个错误",
+  "errors_other": "{{count}} 个错误",
+  "warnings_one": "{{count}} 个警告",
+  "warnings_other": "{{count}} 个警告",
+  "clickToView": "点击查看",
+  "tooltipWithCounts": "{{errors}} 个错误，{{warnings}} 个警告"
+}

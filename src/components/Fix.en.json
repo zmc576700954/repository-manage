@@ -1,0 +1,18 @@
+{
+  "drawerTitle": "Fix: {{entry}}",
+  "noErrors": "No errors",
+  "applying": "Applying...",
+  "risk": {
+    "low": "Low risk",
+    "medium": "Medium risk",
+    "high": "High risk"
+  },
+  "kind": {
+    "manual": "Manual fix required"
+  },
+  "common": {
+    "apply": "Apply",
+    "openDocs": "Open docs",
+    "failed": "Failed: {{reason}}"
+  }
+}

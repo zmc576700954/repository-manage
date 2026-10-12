@@ -20,17 +20,19 @@ import ValidationPanelZh from '../components/ValidationPanel.zh.json';
 import ValidationPanelEn from '../components/ValidationPanel.en.json';
 import ValidationZh from './Validation.zh.json';
 import ValidationEn from './Validation.en.json';
-import ErrorBarZh from '../components/ErrorBar.zh.json';
-import ErrorBarEn from '../components/ErrorBar.en.json';
+import ErrorZh from '../components/Error.zh.json';
+import ErrorEn from '../components/Error.en.json';
+import FixZh from '../components/Fix.zh.json';
+import FixEn from '../components/Fix.en.json';
 import FilterPanelZh from '../components/FilterPanel.zh.json';
 import FilterPanelEn from '../components/FilterPanel.en.json';
 import RightPanelZh from '../components/RightPanel.zh.json';
 import RightPanelEn from '../components/RightPanel.en.json';
 
-export const NS = ['App', 'Errors', 'Settings', 'Sidebar', 'NodeCard', 'RelationDialog', 'MapView', 'EntryDialog', 'DetailPanel', 'ValidationPanel', 'Validation', 'ErrorBar', 'FilterPanel', 'RightPanel'] as const;
+export const NS = ['App', 'Errors', 'Settings', 'Sidebar', 'NodeCard', 'RelationDialog', 'MapView', 'EntryDialog', 'DetailPanel', 'ValidationPanel', 'Validation', 'Error', 'Fix', 'FilterPanel', 'RightPanel'] as const;
 export type Namespace = (typeof NS)[number];
 
 export const resources = {
-  zh: { App: AppZh, Errors: ErrorsZh, Settings: SettingsZh, Sidebar: SidebarZh, NodeCard: NodeCardZh, RelationDialog: RelationDialogZh, MapView: MapViewZh, EntryDialog: EntryDialogZh, DetailPanel: DetailPanelZh, ValidationPanel: ValidationPanelZh, Validation: ValidationZh, ErrorBar: ErrorBarZh, FilterPanel: FilterPanelZh, RightPanel: RightPanelZh },
-  en: { App: AppEn, Errors: ErrorsEn, Settings: SettingsEn, Sidebar: SidebarEn, NodeCard: NodeCardEn, RelationDialog: RelationDialogEn, MapView: MapViewEn, EntryDialog: EntryDialogEn, DetailPanel: DetailPanelEn, ValidationPanel: ValidationPanelEn, Validation: ValidationEn, ErrorBar: ErrorBarEn, FilterPanel: FilterPanelEn, RightPanel: RightPanelEn },
+  zh: { App: AppZh, Errors: ErrorsZh, Settings: SettingsZh, Sidebar: SidebarZh, NodeCard: NodeCardZh, RelationDialog: RelationDialogZh, MapView: MapViewZh, EntryDialog: EntryDialogZh, DetailPanel: DetailPanelZh, ValidationPanel: ValidationPanelZh, Validation: ValidationZh, Error: ErrorZh, Fix: FixZh, FilterPanel: FilterPanelZh, RightPanel: RightPanelZh },
+  en: { App: AppEn, Errors: ErrorsEn, Settings: SettingsEn, Sidebar: SidebarEn, NodeCard: NodeCardEn, RelationDialog: RelationDialogEn, MapView: MapViewEn, EntryDialog: EntryDialogEn, DetailPanel: DetailPanelEn, ValidationPanel: ValidationPanelEn, Validation: ValidationEn, Error: ErrorEn, Fix: FixEn, FilterPanel: FilterPanelEn, RightPanel: RightPanelEn },
 } as const;
