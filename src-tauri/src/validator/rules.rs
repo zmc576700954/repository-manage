@@ -83,11 +83,16 @@ pub fn check_id_matches_path(
     };
     let file_name_str = file_name.to_string_lossy();
     let parent = rel.parent().map(|p| p.to_string_lossy().replace('\\', "/"));
-    let id_from_path = match parent.as_deref() {
-        Some(p) if !p.is_empty() && p != "." => {
-            format!("{}-{}", p.replace('/', "-"), file_name_str)
-        }
-        _ => file_name_str.to_string(),
+    // 跳过保留前缀（_inbox, _archive, _drafts 等），
+    // 这些目录只是分组容器，不参与 id 派生。
+    let parent_normalized = parent
+        .as_deref()
+        .filter(|p| !p.is_empty() && *p != ".")
+        .map(strip_reserved_prefix)
+        .filter(|s| !s.is_empty());
+    let id_from_path = match parent_normalized.as_deref() {
+        Some(p) => format!("{}-{}", p.replace('/', "-"), file_name_str),
+        None => file_name_str.to_string(),
     };
     if entry.id != id_from_path && !entry.id.is_empty() {
         return vec![ValidationIssue {
@@ -103,6 +108,16 @@ pub fn check_id_matches_path(
         }];
     }
     vec![]
+}
+
+/// 去掉路径开头所有保留前缀（`_` 开头），让 id 只反映用户可见的部分。
+fn strip_reserved_prefix(path: &str) -> String {
+    let parts: Vec<&str> = path.split('/').collect();
+    let kept: Vec<&str> = parts
+        .into_iter()
+        .skip_while(|p| p.starts_with('_'))
+        .collect();
+    kept.join("/")
 }
 
 pub fn check_directory_depth(
