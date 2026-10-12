@@ -33,7 +33,7 @@ pub fn apply_metadata_changes(
 fn replace_or_insert(content: &str, field: &str, value: &str) -> String {
     use regex::Regex;
     // 匹配 `<!-- @synapse-{field}: ... -->`（不跨行）
-    let pattern = format!(r"(?m)^(<!-- @synapse-{field}:\s*)([^-]+?)(\s*-->)$");
+    let pattern = format!(r"(?m)^(<!-- @synapse-{field}:\s*)([^-]*?)(\s*-->)$");
     let re = Regex::new(&pattern).expect("valid regex");
     if let Some(caps) = re.captures(content) {
         // 在原行原地替换
@@ -113,6 +113,38 @@ mod tests {
         assert!(
             content.contains("# Note\n"),
             "markdown body untouched: {content}"
+        );
+    }
+
+    /// Pin the dash-in-value case: the regex must NOT exclude dashes
+    /// from the captured value, otherwise titles like "React - Hooks"
+    /// or tags like "high-priority" silently fail to update.
+    #[test]
+    fn update_title_with_dash_in_value() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("note.md");
+        fs::write(
+            &path,
+            "<!-- @synapse-id: note -->\n\
+             <!-- @synapse-title: Old-Dash-Title -->\n",
+        )
+        .unwrap();
+
+        apply_metadata_changes(
+            &path,
+            &MetadataChanges {
+                title: Some("React - Hooks 深入".to_string()),
+                tags: None,
+                labels: None,
+                status: None,
+            },
+        )
+        .unwrap();
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("<!-- @synapse-title: React - Hooks 深入 -->"),
+            "title with dashes/spaces/CJK not updated: {content}"
         );
     }
 }
