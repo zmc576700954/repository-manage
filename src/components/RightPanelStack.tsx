@@ -8,6 +8,7 @@ const panelTitles: Record<PanelType, string> = {
   validation: 'Validation',
   settings: 'Settings',
   filter: 'Filter',
+  detail: 'Detail',
 };
 
 export const RightPanelStack: React.FC = () => {
