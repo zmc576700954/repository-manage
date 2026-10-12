@@ -60,12 +60,19 @@ pub fn read_md_file(file: &Path, kb_root: &Path) -> RawEntry {
 
     let content = std::fs::read_to_string(file).unwrap_or_default();
 
-    let title = content
-        .lines()
-        .find(|l| l.trim_start().starts_with("# "))
-        .map(|l| l.trim_start_matches('#').trim().to_string())
+    let metadata = parse_metadata_comments(&content);
+    let synapse_title = metadata.get("title").cloned();
+
+    let title = synapse_title
         .filter(|s| !s.is_empty())
-        .unwrap_or(file_stem.clone());
+        .unwrap_or_else(|| {
+            content
+                .lines()
+                .find(|l| l.trim_start().starts_with("# "))
+                .map(|l| l.trim_start_matches('#').trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or(file_stem.clone())
+        });
 
     let linked_targets = extract_double_bracket_links(&content);
     let markdown_links = extract_markdown_links(&content);
@@ -406,5 +413,43 @@ body
         let entry = read_entry(&entry_dir);
         // @synapse-group 应被静默忽略，labels 保持空
         assert!(entry.labels.is_empty());
+    }
+
+    /// flat-md format: `@synapse-title` should override `# heading` so
+    /// inline title edits in the UI actually update the displayed
+    /// title. Pre-fix this returned "正文" (from `# 正文`) instead of
+    /// the metadata title.
+    #[test]
+    fn flat_md_prefers_synapse_title_over_heading() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("note.md"),
+            r#"<!-- @synapse-id: note -->
+<!-- @synapse-title: Display Title -->
+
+# 正文
+"#,
+        )
+        .unwrap();
+
+        let entry = read_md_file(&root.join("note.md"), root);
+        assert_eq!(entry.title, "Display Title");
+    }
+
+    /// flat-md format: when no `@synapse-title` is present, fall back
+    /// to the first `# heading` (preserves the old behavior).
+    #[test]
+    fn flat_md_falls_back_to_heading_when_no_synapse_title() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("note.md"),
+            "# Just heading\n",
+        )
+        .unwrap();
+
+        let entry = read_md_file(&root.join("note.md"), root);
+        assert_eq!(entry.title, "Just heading");
     }
 }
