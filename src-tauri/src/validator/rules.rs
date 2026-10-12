@@ -25,6 +25,7 @@ pub fn check_all(
     issues.extend(check_broken_link_targets(entry, kb_root, all_ids));
     issues.extend(check_orphan_candidate(entry, kb_root, all_ids));
     issues.extend(check_unused_attachments(entry, kb_root, all_ids));
+    issues.extend(check_legacy_group_field(entry, kb_root, all_ids));
     // 应用 per-entry ignore
     issues.retain(|i| !entry.ignored_rules.contains(&i.rule_id));
     issues
@@ -305,6 +306,27 @@ pub fn check_unused_attachments(
     _all_ids: &HashSet<String>,
 ) -> Vec<ValidationIssue> {
     // 简化版：留待未来基于实际 attachments 目录扫描
+    vec![]
+}
+
+pub fn check_legacy_group_field(
+    entry: &RawEntry,
+    _kb_root: &Path,
+    _all_ids: &HashSet<String>,
+) -> Vec<ValidationIssue> {
+    if let Some(value) = &entry.group {
+        return vec![ValidationIssue {
+            entry_id: entry.id.clone(),
+            rule_id: "W6".into(),
+            severity: Severity::Warning,
+            message: format!(
+                "Legacy @synapse-group: {} (run `synapse migrate-labels` or convert manually)",
+                value
+            ),
+            file_line: None,
+            ignored: false,
+        }];
+    }
     vec![]
 }
 
