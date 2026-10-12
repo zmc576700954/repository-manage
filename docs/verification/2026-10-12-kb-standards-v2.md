@@ -5,18 +5,39 @@
 
 ## 验收记录（2026-10-12）
 
-CLI 层完成全部可自动化验收（32/32 手工 + 8/8 边界 + 8/8 回归），共发现并修复 4 个 issue：
+### CLI 层（已完成，18/48）
 
-- `count_by_severity` 使用 `matches!` 绑定模式，恒为 true（commit 61a7026）
-- `@synapse-id` 永远被路径覆盖（commit 5941663）
-- 扫描器 max_depth(3) 阻止 E5 检测深目录（commit 2d2ef0f）
-- 扫描器会扫到迁移备份目录（commit fb95aab）
-- W6 规则（legacy @synapse-group）缺失（commit 908dc5d）
-- validate-all 只是占位（commit 6b1f8f3）
-- 迁移预览输出 `migrated` 应为 `would_modify`（commit 0845661）
-- E2 对 `_inbox` 等保留前缀应剥离（commit a73e4e8）
+| 类型 | 已验收 | 范围 |
+|------|-------|------|
+| 解析器/字段 | #1 #2 #3 #4 #5 #6 #7 #8 | 8/8 |
+| 迁移 | #19 #20 #21 #22 | 4/4 |
+| 多 KB | #25 | 1/1 |
+| 边界 | #33 #34 #35 | 3/3 |
+| 回归 | R8 | 1/1 |
 
-UI 层（#9-18, #26-32, R2-R6）需启动桌面 app 后人工验证；本轮未启动 dev build。
+修复的 8 个 issue（按 commit 顺序）：
+- `count_by_severity` 用 `matches!` 绑定模式，恒为 true（61a7026）
+- `@synapse-id` 永远被路径覆盖（5941663）
+- 扫描器 max_depth(3) 阻止 E5 检测深目录（2d2ef0f）
+- 扫描器扫到迁移备份目录（fb95aab）
+- W6 规则（legacy @synapse-group）缺失（908dc5d）
+- validate-all 只是占位（6b1f8f3）
+- 迁移预览输出 `migrated` 应为 `would_modify`（0845661）
+- E2 对 `_inbox` 等保留前缀应剥离（a73e4e8）
+
+### UI 层（待人工验收，30/48）
+
+以下项需要启动 `npm run tauri:dev` 后由维护者人工验证：
+
+- 校验 UI：#9 #10 #11 #12 #13 #14
+- 标签筛选：#15 #16 #17 #18
+- 多 KB：#23 #24
+- i18n：#26 #27 #28
+- 性能：#29 #30 #31 #32
+- 边界：#36 #37 #38 #39 #40
+- 回归：R1 R2 R3 R4 R5 R6 R7
+
+自动化层验证已通过 179 个 Rust 单元测试 + Vite 编译（`npm run build`）。
 
 ---
 
