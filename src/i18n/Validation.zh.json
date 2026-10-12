@@ -1,12 +1,54 @@
 {
   "severity": { "error": "错误", "warning": "警告", "info": "提示" },
   "rule": {
-    "E1": { "title": "缺少 ID", "message": "@synapse-id 不能为空" },
-    "E2": { "title": "ID 与路径不一致", "message": "@synapse-id \"{{id}}\" 应等于 \"{{expected}}\"" },
-    "E3": { "title": "缺少标题", "message": "@synapse-title 不能为空" },
-    "E4": { "title": "缺少类型标签", "message": "@synapse-tags 至少需要一个 type: 前缀" },
-    "W4": { "title": "悬空链接", "message": "[[{{target}}]] 目标不存在" },
-    "W5": { "title": "孤立候选", "message": "entry 无任何 link 边" }
+    "E1": {
+      "title": "缺少 ID",
+      "message": "@synapse-id 不能为空",
+      "cause": "每个 entry 必须有唯一 ID，由 @synapse-id 注释或目录名决定",
+      "fixGuide": "1. 打开 content.md\n2. 在头部加上 <!-- @synapse-id: <派生id> -->\n3. 或重命名目录为期望 ID"
+    },
+    "E2": {
+      "title": "ID 与路径不一致",
+      "message": "@synapse-id \"{{id}}\" 应等于 \"{{expected}}\"",
+      "cause": "@synapse-id 与目录名不匹配会导致链接解析错位",
+      "fixGuide": "1. 检查 @synapse-id 是否正确\n2. 用一键修复使其与路径一致\n3. 或重命名目录"
+    },
+    "E3": {
+      "title": "缺少标题",
+      "message": "@synapse-title 不能为空",
+      "cause": "标题用于在地图和搜索结果中显示 entry",
+      "fixGuide": "1. 打开 content.md\n2. 在头部加上 <!-- @synapse-title: <标题> -->\n3. 或使用一键修复"
+    },
+    "E4": {
+      "title": "缺少类型标签",
+      "message": "@synapse-tags 至少需要一个 type: 前缀",
+      "cause": "type: 标签用于分类和筛选（如 type:note, type:ref）",
+      "fixGuide": "1. 打开 @synapse-tags 注释\n2. 添加 type:note 标签\n3. 或使用一键修复"
+    },
+    "E5": {
+      "title": "目录深度过深",
+      "message": "目录嵌套层数超过 3 层",
+      "cause": "深度过深会增加链接维护成本",
+      "fixGuide": "1. 将嵌套子目录移到浅层\n2. 或合并相关 entry"
+    },
+    "E6": {
+      "title": "root 级存在 .md 文件",
+      "message": "根目录不应直接放 .md 文件",
+      "cause": "root 级 .md 应被包装到 entries/<name>/ 目录",
+      "fixGuide": "1. 在 root 创建 entries/<basename>/\n2. 把 .md 移入并改名为 content.md\n3. 或使用一键修复"
+    },
+    "E7": {
+      "title": "保留前缀目录",
+      "message": "目录以 _ 开头（保留前缀）",
+      "cause": "_ 前缀目录被特殊保留用于隐藏或内部用途",
+      "fixGuide": "1. 重命名目录去掉 _ 前缀\n2. 或将其移出 KB 根"
+    },
+    "E9": {
+      "title": "用户写了 system label",
+      "message": "{{label}} 是系统自动维护的 label",
+      "cause": "system label 由规则自动添加，用户不应手动写",
+      "fixGuide": "1. 删除该 @synapse-labels 注释\n2. 或使用一键修复"
+    }
   },
   "systemLabel": {
     "recently-modified": "最近修改",

@@ -1,17 +1,59 @@
 {
   "severity": { "error": "Error", "warning": "Warning", "info": "Info" },
   "rule": {
-    "E1": { "title": "Missing ID", "message": "@synapse-id cannot be empty" },
-    "E2": { "title": "ID mismatch", "message": "@synapse-id \"{{id}}\" should equal \"{{expected}}\"" },
-    "E3": { "title": "Missing title", "message": "@synapse-title cannot be empty" },
-    "E4": { "title": "Missing type tag", "message": "@synapse-tags must have at least one type: prefix" },
-    "W4": { "title": "Broken link", "message": "[[{{target}}]] target does not exist" },
-    "W5": { "title": "Orphan candidate", "message": "Entry has no links" }
+    "E1": {
+      "title": "Missing ID",
+      "message": "@synapse-id is empty",
+      "cause": "Every entry must have a unique ID, set via @synapse-id comment or directory name",
+      "fixGuide": "1. Open content.md\n2. Add <!-- @synapse-id: <derived-id> --> at the top\n3. Or rename the directory to match"
+    },
+    "E2": {
+      "title": "ID does not match path",
+      "message": "@synapse-id \"{{id}}\" should equal \"{{expected}}\"",
+      "cause": "Mismatch breaks wikilink resolution",
+      "fixGuide": "1. Check @synapse-id is correct\n2. Use one-click fix to sync with path\n3. Or rename the directory"
+    },
+    "E3": {
+      "title": "Missing title",
+      "message": "@synapse-title is empty",
+      "cause": "Title is shown on the map and in search results",
+      "fixGuide": "1. Open content.md\n2. Add <!-- @synapse-title: <title> --> at the top\n3. Or use one-click fix"
+    },
+    "E4": {
+      "title": "Missing type tag",
+      "message": "@synapse-tags must have at least one type: prefix",
+      "cause": "type: tags are used for categorization and filtering (e.g. type:note, type:ref)",
+      "fixGuide": "1. Open @synapse-tags comment\n2. Add type:note tag\n3. Or use one-click fix"
+    },
+    "E5": {
+      "title": "Directory too deep",
+      "message": "Directory nesting exceeds 3 levels",
+      "cause": "Deep nesting makes link maintenance harder",
+      "fixGuide": "1. Move nested subdirectories to a shallower level\n2. Or merge related entries"
+    },
+    "E6": {
+      "title": "Root-level .md file exists",
+      "message": "Root directory should not contain .md files directly",
+      "cause": "Root .md files should be wrapped in entries/<name>/ directory",
+      "fixGuide": "1. Create entries/<basename>/ at root\n2. Move .md in and rename to content.md\n3. Or use one-click fix"
+    },
+    "E7": {
+      "title": "Reserved prefix directory",
+      "message": "Directory starts with _ (reserved prefix)",
+      "cause": "_ prefix directories are reserved for hidden/internal use",
+      "fixGuide": "1. Rename the directory to remove _ prefix\n2. Or move it outside the KB root"
+    },
+    "E9": {
+      "title": "User wrote system label",
+      "message": "{{label}} is a system-maintained label",
+      "cause": "System labels are auto-added by rules, users should not write them manually",
+      "fixGuide": "1. Remove that @synapse-labels entry\n2. Or use one-click fix"
+    }
   },
   "systemLabel": {
-    "recently-modified": "Recently Modified",
+    "recently-modified": "Recently modified",
     "orphan": "Orphan",
     "stale": "Stale",
-    "broken-link": "Broken Link"
+    "broken-link": "Broken link"
   }
 }
