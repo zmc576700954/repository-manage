@@ -1,3 +1,7 @@
 {
-  "missingContentTitle": "Missing content.md"
+  "missingContentTitle": "Missing content.md",
+  "errorTooltip_one": "{{count}} error",
+  "errorTooltip_other": "{{count}} errors",
+  "warningTooltip_one": "{{count}} warning",
+  "warningTooltip_other": "{{count}} warnings"
 }

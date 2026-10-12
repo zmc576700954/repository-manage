@@ -20,15 +20,28 @@ export function NodeCard({ data, selected }: NodeProps<NodeCardData>) {
     : hasWarning
     ? 'border-2 border-yellow-400'
     : '';
+  const badge = hasError
+    ? { color: 'bg-red-500', title: t('errorTooltip', { count: data.errorCount }) }
+    : hasWarning
+    ? { color: 'bg-yellow-400', title: t('warningTooltip', { count: data.warningCount }) }
+    : null;
   return (
     <div
-      className={`max-w-[200px] min-w-[160px] overflow-hidden rounded-lg border bg-white px-3 py-2 shadow-sm transition ${validationBorder} ${
+      className={`relative max-w-[200px] min-w-[160px] overflow-hidden rounded-lg border bg-white px-3 py-2 shadow-sm transition ${validationBorder} ${
         selected
           ? 'border-blue-500 ring-2 ring-blue-200'
           : 'border-gray-200 hover:border-gray-300'
       }`}
       style={{ borderLeft: `4px solid ${accent}` }}
     >
+      {badge && (
+        <span
+          className={`absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold text-white ${badge.color}`}
+          title={badge.title}
+        >
+          !
+        </span>
+      )}
       <Handle type="target" position={Position.Top} className="!bg-gray-300" />
       <div className="flex min-w-0 items-center gap-2">
         {!data.hasContentMd && (
