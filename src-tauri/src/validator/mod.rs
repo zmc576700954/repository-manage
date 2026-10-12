@@ -36,10 +36,10 @@ pub struct ValidationReport {
 }
 
 impl ValidationReport {
-    fn count_by_severity(&self, severity: Severity) -> usize {
+    fn count_by_severity(&self, target: Severity) -> usize {
         self.issues
             .iter()
-            .filter(|i| matches!(i.severity, severity) && !i.ignored)
+            .filter(|i| i.severity == target && !i.ignored)
             .count()
     }
 
