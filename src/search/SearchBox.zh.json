@@ -1,0 +1,12 @@
+{
+  "placeholder": "搜索整个知识库…",
+  "shortcutHint": "⌘K",
+  "noResults": "无匹配条目",
+  "searching": "搜索中…",
+  "resultCount": "{count} 条匹配",
+  "inGroupBadge": "📁 {group}",
+  "openEntry": "打开",
+  "createFromRef": "从引用创建",
+  "loadFailed": "读取失败，已跳过",
+  "matchHighlight": "匹配"
+}

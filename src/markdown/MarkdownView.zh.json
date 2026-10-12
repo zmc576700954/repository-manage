@@ -1,0 +1,8 @@
+{
+  "renderError": "渲染失败，已切换到原文",
+  "renderErrorTitle": "渲染失败",
+  "viewToggleRender": "渲染",
+  "viewToggleSource": "原文",
+  "wikilinkBroken": "(引用不存在)",
+  "wikilinkBrokenHint": "点击创建"
+}

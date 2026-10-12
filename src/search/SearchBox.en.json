@@ -1,0 +1,12 @@
+{
+  "placeholder": "Search across the KB…",
+  "shortcutHint": "Ctrl+K",
+  "noResults": "No matches",
+  "searching": "Searching…",
+  "resultCount": "{count} matches",
+  "inGroupBadge": "📁 {group}",
+  "openEntry": "Open",
+  "createFromRef": "Create from ref",
+  "loadFailed": "Read failed, skipped",
+  "matchHighlight": "match"
+}

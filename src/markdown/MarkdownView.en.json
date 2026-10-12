@@ -1,0 +1,8 @@
+{
+  "renderError": "Render failed, showing source",
+  "renderErrorTitle": "Render failed",
+  "viewToggleRender": "Rendered",
+  "viewToggleSource": "Source",
+  "wikilinkBroken": "(missing target)",
+  "wikilinkBrokenHint": "Click to create"
+}
