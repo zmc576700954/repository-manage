@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/store/useAppStore';
 import { usePanelStore } from '@/store/panelStore';
 import { RelationDialog } from '@/components/RelationDialog';
+import { MarkdownView } from '@/markdown/MarkdownView';
 import type { Entry, Relation } from '@shared/types';
 
 interface ExtLink {
@@ -92,6 +93,7 @@ function resolveInternalLink(
 
 export function DetailPanel() {
   const { t } = useTranslation('DetailPanel');
+  const { t: tMd } = useTranslation('MarkdownView');
   const selectedEntryId = useAppStore((s) => s.selectedEntryId);
   const entries = useAppStore((s) => s.entries);
   const kbs = useAppStore((s) => s.kbs);
@@ -118,6 +120,7 @@ export function DetailPanel() {
     markdown: null,
     error: null,
   });
+  const [viewMode, setViewMode] = useState<'rendered' | 'source'>('rendered');
   const [extLinks, setExtLinks] = useState<ExtLink[]>([]);
   const [showRelDialog, setShowRelDialog] = useState(false);
   const [linkBusy, setLinkBusy] = useState<number | null>(null);
@@ -149,12 +152,14 @@ export function DetailPanel() {
     if (!selectedEntryId) {
       setContent({ markdown: null, error: null });
       setExtLinks([]);
+      setViewMode('rendered');
       return;
     }
     let cancelled = false;
     setContent({ markdown: null, error: null });
     setExtLinks([]);
     setLinkMsg({});
+    setViewMode('rendered');
     invoke<string | null>('get_entry_content', { id: selectedEntryId })
       .then((text) => {
         if (cancelled) return;
@@ -248,6 +253,26 @@ export function DetailPanel() {
     }
   };
 
+  const handleWikilinkNavigate = (targetId: string) => {
+    selectEntry(targetId);
+  };
+
+  const handleWikilinkCreate = (targetId: string, caption: string) => {
+    if (!entry) return;
+    setCreateDialog({
+      open: true,
+      linkIndex: -1,
+      refText: caption || targetId,
+      sourceUrl: targetId,
+    });
+  };
+
+  const resolveWikilinkTarget = (target: string) => {
+    if (!entry) return null;
+    const found = resolveInternalLink(target, entry, entries, kbRoot);
+    return found ? { id: found.id, title: found.title } : null;
+  };
+
   return (
     <>
       <div className="flex h-full flex-col">
@@ -308,13 +333,48 @@ export function DetailPanel() {
 
           {/* Markdown content */}
           <div className="border-b border-gray-200 p-4">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-              {t('contentHeader')}
-            </h3>
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+                {t('contentHeader')}
+              </h3>
+              {content.markdown != null && (
+                <div className="flex gap-1 rounded-md border border-gray-200 bg-white p-0.5 text-[11px]">
+                  <button
+                    onClick={() => setViewMode('rendered')}
+                    className={`rounded px-2 py-0.5 ${
+                      viewMode === 'rendered'
+                        ? 'bg-blue-100 text-blue-700'
+                        : 'text-gray-500 hover:bg-gray-50'
+                    }`}
+                  >
+                    {tMd('viewToggleRender')}
+                  </button>
+                  <button
+                    onClick={() => setViewMode('source')}
+                    className={`rounded px-2 py-0.5 ${
+                      viewMode === 'source'
+                        ? 'bg-blue-100 text-blue-700'
+                        : 'text-gray-500 hover:bg-gray-50'
+                    }`}
+                  >
+                    {tMd('viewToggleSource')}
+                  </button>
+                </div>
+              )}
+            </div>
             {content.markdown != null ? (
-              <pre className="max-h-[60vh] overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-gray-50 p-3 font-mono text-xs leading-relaxed text-gray-800">
-                {content.markdown}
-              </pre>
+              viewMode === 'rendered' ? (
+                <MarkdownView
+                  source={content.markdown}
+                  resolveTarget={resolveWikilinkTarget}
+                  onNavigate={handleWikilinkNavigate}
+                  onCreateFromRef={handleWikilinkCreate}
+                />
+              ) : (
+                <pre className="max-h-[60vh] overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-gray-50 p-3 font-mono text-xs leading-relaxed text-gray-800">
+                  {content.markdown}
+                </pre>
+              )
             ) : (
               <p className="text-sm text-gray-400">{content.error ?? t('loadingContent')}</p>
             )}
