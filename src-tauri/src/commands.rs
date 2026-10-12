@@ -1038,7 +1038,7 @@ pub async fn update_entry_metadata_impl(
     entries
         .into_iter()
         .find(|e| e.id == id)
-        .ok_or_else(|| AppError::EntryNotFound { id })
+        .ok_or(AppError::EntryNotFound { id })
 }
 
 /// Tauri command wrapper for `update_entry_metadata_impl`. The
