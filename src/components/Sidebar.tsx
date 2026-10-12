@@ -30,7 +30,12 @@ export function Sidebar() {
   const loadEntries = useAppStore((s) => s.loadEntries);
   const selectedEntryId = useAppStore((s) => s.selectedEntryId);
   const selectEntry = useAppStore((s) => s.selectEntry);
-  const { open } = usePanelStore();
+  const openPanel = usePanelStore((s) => s.open);
+
+  const handleSelect = (id: string) => {
+    selectEntry(id);
+    openPanel('detail');
+  };
 
   const activeKb = useMemo(
     () => kbs.find((k) => k.id === activeKbId),
@@ -95,7 +100,7 @@ export function Sidebar() {
               </button>
             )}
             <button
-              onClick={() => open('settings')}
+              onClick={() => openPanel('settings')}
               className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
               title={t('manageKbTitle')}
             >
@@ -133,7 +138,7 @@ export function Sidebar() {
                 collapsed={collapsed}
                 onToggle={toggleNode}
                 selectedEntryId={selectedEntryId}
-                onSelect={selectEntry}
+                onSelect={handleSelect}
                 onOpenDialog={setDialogMode}
               />
             ))}
