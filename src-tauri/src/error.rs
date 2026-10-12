@@ -89,6 +89,28 @@ pub enum AppError {
     /// under the active KB's `.synapse-fix-backup` directory.
     #[error("backup-not-found: {id}")]
     BackupNotFound { id: String },
+
+    /// Inline metadata edit rejected a field value (empty title, tag with
+    /// comma, status not in enum, etc.).
+    #[error("invalid metadata field '{field}': {reason}")]
+    MetadataInvalidField { field: String, reason: String },
+
+    /// Rename precheck found that the target id is already taken by
+    /// another entry in the same KB.
+    #[error("rename conflict: id '{new_id}' already exists")]
+    RenameConflict { new_id: String },
+
+    /// Filesystem refuses to move — target file already exists.
+    #[error("rename target file exists: {path}")]
+    RenameFileExists { path: String },
+
+    /// File mtime changed between read and write — possible external edit.
+    #[error("external edit detected on {path}")]
+    ExternalEditDetected { path: String },
+
+    /// Cascade find/replace failed mid-way; rollback already attempted.
+    #[error("cascade failed: {failed_files:?} ({reason})")]
+    CascadeFailed { failed_files: Vec<String>, reason: String },
 }
 
 impl AppError {
