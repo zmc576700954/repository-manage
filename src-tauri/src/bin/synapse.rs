@@ -96,16 +96,22 @@ fn main() -> ExitCode {
                 Ok(r) => {
                     if report {
                         println!(
-                            "scanned={} migrated={} kept_with_warning={}",
-                            r.scanned, r.migrated, r.kept_with_warning
+                            "scanned={} migrated={} kept_with_warning={} would_modify={}",
+                            r.scanned, r.migrated, r.kept_with_warning, r.would_modify
+                        );
+                    } else if dry_run {
+                        println!(
+                            "Migration preview:\n  scanned: {}\n  would_modify: {}\n  kept_with_warning: {}",
+                            r.scanned, r.would_modify, r.kept_with_warning
                         );
                     } else {
                         println!(
-                            "Migration {}:\n  scanned: {}\n  migrated: {}\n  kept_with_warning: {}",
-                            if dry_run { "preview" } else { "complete" },
+                            "Migration complete:\n  scanned: {}\n  migrated: {}\n  kept_with_warning: {}\n  backup: {}\n  log: {}",
                             r.scanned,
                             r.migrated,
-                            r.kept_with_warning
+                            r.kept_with_warning,
+                            r.backup_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "(none)".into()),
+                            r.log_path.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "(none)".into())
                         );
                     }
                     ExitCode::SUCCESS
