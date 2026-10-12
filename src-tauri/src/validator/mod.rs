@@ -1,6 +1,7 @@
 //! 校验引擎：检查 KB 是否符合规范。
 //! 规则分 E（error）/ W（warning）/ I（info）三级。
 
+pub mod fix;
 pub mod rules;
 pub mod system_labels;
 pub mod migrator;
