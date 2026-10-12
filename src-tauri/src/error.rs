@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::time::SystemTime;
 use thiserror::Error;
 
 /// Application-level error. Every variant carries a stable kebab-case
@@ -91,25 +92,28 @@ pub enum AppError {
     BackupNotFound { id: String },
 
     /// Inline metadata edit rejected a field value (empty title, tag with
-    /// comma, status not in enum, etc.).
-    #[error("invalid metadata field '{field}': {reason}")]
+    /// comma, status not in enum, etc.). Frontend matches on the
+    /// `metadata-invalid-field:` prefix and maps `field`/`reason` to
+    /// localized messages.
+    #[error("metadata-invalid-field: {field} {reason}")]
     MetadataInvalidField { field: String, reason: String },
 
     /// Rename precheck found that the target id is already taken by
     /// another entry in the same KB.
-    #[error("rename conflict: id '{new_id}' already exists")]
+    #[error("rename-conflict: id '{new_id}' already exists")]
     RenameConflict { new_id: String },
 
     /// Filesystem refuses to move — target file already exists.
-    #[error("rename target file exists: {path}")]
+    #[error("rename-target-file-exists: {path}")]
     RenameFileExists { path: String },
 
     /// File mtime changed between read and write — possible external edit.
-    #[error("external edit detected on {path}")]
-    ExternalEditDetected { path: String },
+    /// `mtime` is the system time observed at write time.
+    #[error("external-edit-detected: {path} (mtime: {mtime:?})")]
+    ExternalEditDetected { path: String, mtime: SystemTime },
 
     /// Cascade find/replace failed mid-way; rollback already attempted.
-    #[error("cascade failed: {failed_files:?} ({reason})")]
+    #[error("cascade-failed: {failed_files:?} ({reason})")]
     CascadeFailed { failed_files: Vec<String>, reason: String },
 }
 
