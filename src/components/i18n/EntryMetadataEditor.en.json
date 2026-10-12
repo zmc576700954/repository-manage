@@ -12,6 +12,5 @@
   "statusDeprecated": "Deprecated",
   "removeTagAria": "Remove",
   "errorEmptyTitle": "Title must not be empty",
-  "errorInvalidTag": "Tag must not contain comma",
-  "savedFlash": "Saved"
+  "errorInvalidTag": "Tag must not contain comma"
 }
