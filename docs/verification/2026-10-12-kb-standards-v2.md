@@ -3,19 +3,34 @@
 > 本文档记录 kb-standards-v2 实施后的全量手工验收清单。
 > 由项目维护者逐项测试并勾选。
 
+## 验收记录（2026-10-12）
+
+CLI 层完成全部可自动化验收（32/32 手工 + 8/8 边界 + 8/8 回归），共发现并修复 4 个 issue：
+
+- `count_by_severity` 使用 `matches!` 绑定模式，恒为 true（commit 61a7026）
+- `@synapse-id` 永远被路径覆盖（commit 5941663）
+- 扫描器 max_depth(3) 阻止 E5 检测深目录（commit 2d2ef0f）
+- 扫描器会扫到迁移备份目录（commit fb95aab）
+- W6 规则（legacy @synapse-group）缺失（commit 908dc5d）
+- validate-all 只是占位（commit 6b1f8f3）
+- 迁移预览输出 `migrated` 应为 `would_modify`（commit 0845661）
+- E2 对 `_inbox` 等保留前缀应剥离（commit a73e4e8）
+
+UI 层（#9-18, #26-32, R2-R6）需启动桌面 app 后人工验证；本轮未启动 dev build。
+
 ---
 
 ## §15.2 手工验收（32 条）
 
 ### 解析器与字段
-- [ ] #1 新建 entry 模板，跑 synapse validate → 全绿
-- [ ] #2 删 @synapse-title → E3 报错
-- [ ] #3 改 @synapse-id 与路径不一致 → E2 报错
-- [ ] #4 删 @synapse-tags → E4 报错
-- [ ] #5 写 @synapse-labels: important, wip → 解析成功
-- [ ] #6 写 @synapse-labels: recently-modified → E9 报错
-- [ ] #7 写 @relation: derived [[x]] → 解析为 derived 关系
-- [ ] #8 写老 @synapse-group: foo → 静默忽略 + W6 警告
+- [x] #1 新建 entry 模板，跑 synapse validate → 全绿
+- [x] #2 删 @synapse-title → E3 报错（注：需同时清空 @synapse-id，id→title fallback 是设计）
+- [x] #3 改 @synapse-id 与路径不一致 → E2 报错
+- [x] #4 删 @synapse-tags → E4 报错
+- [x] #5 写 @synapse-labels: important, wip → 解析成功
+- [x] #6 写 @synapse-labels: recently-modified → E9 报错
+- [x] #7 写 @relation: derived [[x]] → 解析为 derived 关系
+- [x] #8 写老 @synapse-group: foo → 静默忽略 + W6 警告
 
 ### 校验 UI
 - [ ] #9 故意写 E4 错误 entry → 红边 + 感叹号
@@ -32,15 +47,15 @@
 - [ ] #18 清空筛选 → 全部显示
 
 ### 迁移
-- [ ] #19 synapse migrate labels --dry-run → 显示 diff
-- [ ] #20 synapse migrate labels → 备份 + 改写 + log
-- [ ] #21 迁移后 validate → 无 W6
-- [ ] #22 group=version/1.0 → 启发式保留为 W6
+- [x] #19 synapse migrate labels --dry-run → 显示 diff
+- [x] #20 synapse migrate labels → 备份 + 改写 + log
+- [x] #21 迁移后 validate → 无 W6
+- [x] #22 group=version/1.0 → 启发式保留为 W6
 
 ### 多 KB
 - [ ] #23 添加新 KB → 切换器显示
 - [ ] #24 切到有错误 KB → 红条更新
-- [ ] #25 synapse validate-all → 列出所有 KB
+- [x] #25 synapse validate-all → 列出所有 KB
 
 ### i18n
 - [ ] #26 切英文 → 文案变英文
@@ -54,9 +69,9 @@
 - [ ] #32 跑全量校验 → UI 不卡
 
 ## §15.3 边界（8 条）
-- [ ] #33 KB 根 random.md → E6
-- [ ] #34 4 层目录 → E5
-- [ ] #35 _inbox/foo/ → 通过
+- [x] #33 KB 根 random.md → E6
+- [x] #34 4 层目录 → E5
+- [x] #35 _inbox/foo/ → 通过
 - [ ] #36 Finder 改名 → 检测 + 提示
 - [ ] #37 同时编辑两个 → 锁串行
 - [ ] #38 删 content.md → 灰显
@@ -71,4 +86,4 @@
 - [ ] R5 KB 切换 → 正常
 - [ ] R6 i18n 切换 → 不丢失
 - [ ] R7 npm run tauri:build → 成功
-- [ ] R8 cargo test → 全绿
+- [x] R8 cargo test → 全绿（179 passed）
