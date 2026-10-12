@@ -1,0 +1,17 @@
+{
+  "titleLabel": "Title",
+  "titlePlaceholder": "Enter title...",
+  "tagsLabel": "Tags",
+  "tagsPlaceholder": "Add tag...",
+  "labelsLabel": "Labels",
+  "labelsPlaceholder": "Add label...",
+  "statusLabel": "Status",
+  "statusStable": "Stable",
+  "statusDraft": "Draft",
+  "statusWip": "WIP",
+  "statusDeprecated": "Deprecated",
+  "removeTagAria": "Remove",
+  "errorEmptyTitle": "Title must not be empty",
+  "errorInvalidTag": "Tag must not contain comma",
+  "savedFlash": "Saved"
+}

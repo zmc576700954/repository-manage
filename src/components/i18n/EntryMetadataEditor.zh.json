@@ -1,0 +1,17 @@
+{
+  "titleLabel": "标题",
+  "titlePlaceholder": "输入标题...",
+  "tagsLabel": "标签",
+  "tagsPlaceholder": "添加标签...",
+  "labelsLabel": "工作流标注",
+  "labelsPlaceholder": "添加标注...",
+  "statusLabel": "状态",
+  "statusStable": "稳定",
+  "statusDraft": "草稿",
+  "statusWip": "撰写中",
+  "statusDeprecated": "遗弃",
+  "removeTagAria": "移除",
+  "errorEmptyTitle": "标题不能为空",
+  "errorInvalidTag": "标签不能包含逗号",
+  "savedFlash": "已保存"
+}

@@ -1,0 +1,19 @@
+{
+  "title": "重命名条目",
+  "newNameLabel": "新名称",
+  "newNamePlaceholder": "new-name",
+  "newGroupLabel": "新分组",
+  "newGroupPlaceholder": "frontend/subdomain",
+  "precheckChecking": "检查中...",
+  "precheckNoIncoming": "无传入引用",
+  "precheckIncomingOne": "1 个文件引用此条目",
+  "precheckIncomingMany": "{{count}} 个文件引用此条目",
+  "conflictExists": "ID 已存在：{{id}}",
+  "errorInvalidName": "名称不合法",
+  "cascadeLabel": "如何处理传入引用？",
+  "cascadeUpdate": "更新引用（推荐）",
+  "cascadeLeave": "保留为断链",
+  "cancel": "取消",
+  "rename": "重命名",
+  "renameBusy": "重命名中..."
+}

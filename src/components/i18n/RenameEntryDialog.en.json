@@ -1,0 +1,19 @@
+{
+  "title": "Rename Entry",
+  "newNameLabel": "New name",
+  "newNamePlaceholder": "new-name",
+  "newGroupLabel": "New group",
+  "newGroupPlaceholder": "frontend/subdomain",
+  "precheckChecking": "Checking...",
+  "precheckNoIncoming": "No incoming references",
+  "precheckIncomingOne": "1 file references this entry",
+  "precheckIncomingMany": "{{count}} files reference this entry",
+  "conflictExists": "ID already exists: {{id}}",
+  "errorInvalidName": "Invalid name",
+  "cascadeLabel": "How to handle incoming references?",
+  "cascadeUpdate": "Update references (recommended)",
+  "cascadeLeave": "Leave as broken links",
+  "cancel": "Cancel",
+  "rename": "Rename",
+  "renameBusy": "Renaming..."
+}
