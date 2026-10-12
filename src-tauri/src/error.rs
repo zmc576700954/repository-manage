@@ -80,6 +80,10 @@ pub enum AppError {
     /// to read.
     #[error("other: {message}")]
     Other { message: String },
+
+    /// Fix dispatch asked for a rule id that has no implementation.
+    #[error("unknown-rule: {rule_id}")]
+    UnknownRule { rule_id: String },
 }
 
 impl AppError {

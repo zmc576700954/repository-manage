@@ -2,6 +2,7 @@
 //! 规则分 E（error）/ W（warning）/ I（info）三级。
 
 pub mod fix;
+pub mod fix_impls;
 pub mod rules;
 pub mod system_labels;
 pub mod migrator;
