@@ -6,7 +6,9 @@ import { useFixStore } from '@/store/fixStore';
 interface ValidationIssue {
   entry_id: string;
   rule_id: string;
-  severity: Record<string, null>;
+  // Rust `Severity` enum serializes as a bare variant string
+  // (e.g. "Error"), not `{ "Error": null }`.
+  severity: 'Error' | 'Warning' | 'Info';
   message: string;
 }
 
@@ -53,7 +55,7 @@ export const FixDrawer: React.FC<Props> = ({ activeKbRoot }) => {
   if (!drawerEntryId) return null;
 
   const errors = Array.isArray(issues)
-    ? issues.filter((i) => i && 'Error' in (i.severity ?? {}))
+    ? issues.filter((i) => i && i.severity === 'Error')
     : [];
   const loading = !activeKbRoot || issues.length === 0;
 

@@ -10,7 +10,10 @@ type GroupBy = 'severity' | 'entry';
 interface ValidationIssue {
   entry_id: string;
   rule_id: string;
-  severity: Record<Severity, null>;
+  // Rust `Severity` enum serializes as a bare variant string
+  // (e.g. "Error"), NOT `{ "Error": null }`. The TS shape here must
+  // match what serde actually emits.
+  severity: Severity;
   message: string;
 }
 
@@ -19,11 +22,7 @@ interface ValidationReport {
   issues: ValidationIssue[];
 }
 
-const severityKey = (s: Record<Severity, null>): Severity => {
-  if ('Error' in s) return 'Error';
-  if ('Warning' in s) return 'Warning';
-  return 'Info';
-};
+const severityKey = (s: Severity): Severity => s;
 
 export const ValidationPanel: React.FC = () => {
   const { t } = useTranslation('ValidationPanel');
