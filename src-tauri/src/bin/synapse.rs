@@ -123,8 +123,29 @@ fn main() -> ExitCode {
             }
         }
         Commands::ValidateAll => {
-            // 简化：扫描 ~/kb-* 目录
-            ExitCode::SUCCESS
+            use synapse_kb_lib::kb_registry::KbRegistry;
+            let registry = KbRegistry::load_or_default();
+            let kbs = registry.list();
+            if kbs.is_empty() {
+                println!("No KBs registered.");
+                return ExitCode::SUCCESS;
+            }
+            let mut exit = ExitCode::SUCCESS;
+            for kb in kbs {
+                let path = std::path::PathBuf::from(&kb.path);
+                println!("=== {} ({}) ===", kb.name, path.display());
+                let report = synapse_kb_lib::validator::validate_kb(&path);
+                if report.has_errors() {
+                    exit = ExitCode::from(1);
+                }
+                println!(
+                    "  {} errors, {} warnings, {} info",
+                    report.error_count(),
+                    report.warning_count(),
+                    report.info_count()
+                );
+            }
+            exit
         }
     }
 }
