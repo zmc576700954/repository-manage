@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import ReactFlow, {
   Background,
   Controls,
@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/store/useAppStore';
 import { usePanelStore } from '@/store/panelStore';
 import { NodeCard, NodeCardData } from '@/components/NodeCard';
+import { ContextMenu, type MenuItem } from '@/components/ContextMenu';
 import type { RelationType } from '@shared/types';
 
 const RELATION_COLORS: Record<RelationType, string> = {
@@ -65,10 +66,32 @@ interface GroupLayout {
 
 export function MapView() {
   const { t } = useTranslation('MapView');
+  const { t: tCm } = useTranslation('ContextMenu');
   const entries = useAppStore((s) => s.entries);
   const selectEntry = useAppStore((s) => s.selectEntry);
+  const deleteEntry = useAppStore((s) => s.deleteEntry);
+  const deleteRelation = useAppStore((s) => s.deleteRelation);
+  const setRenamingEntryId = useAppStore((s) => s.setRenamingEntryId);
   const relationFilter = useAppStore((s) => s.relationFilter);
   const openPanel = usePanelStore((s) => s.open);
+
+  const [contextMenu, setContextMenu] = useState<
+    | { x: number; y: number; kind: 'node'; entryId: string }
+    | { x: number; y: number; kind: 'edge'; source: string; target: string; type: RelationType }
+    | null
+  >(null);
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  const copyToClipboard = useCallback(
+    async (text: string) => {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // ignore — clipboard may be unavailable in some webviews
+      }
+    },
+    []
+  );
 
   // 1) 按 group 分桶（保持 group 顺序，按 entries 中首次出现的顺序）
   const groupOrder = useMemo(() => {
@@ -176,6 +199,106 @@ export function MapView() {
     [selectEntry, openPanel]
   );
 
+  const onNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      event.preventDefault();
+      setContextMenu({ x: event.clientX, y: event.clientY, kind: 'node', entryId: node.id });
+    },
+    []
+  );
+
+  const onEdgeContextMenu = useCallback(
+    (event: React.MouseEvent, edge: Edge) => {
+      event.preventDefault();
+      const type = (edge.label ?? 'custom') as RelationType;
+      setContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        kind: 'edge',
+        source: edge.source,
+        target: edge.target,
+        type,
+      });
+    },
+    []
+  );
+
+  const buildNodeMenuItems = useCallback(
+    (entryId: string): MenuItem[] => {
+      const entry = entries.find((e) => e.id === entryId);
+      return [
+        {
+          label: tCm('open'),
+          onClick: () => {
+            selectEntry(entryId);
+            openPanel('detail');
+          },
+        },
+        {
+          label: tCm('copyId'),
+          onClick: () => {
+            void copyToClipboard(entryId);
+          },
+        },
+        {
+          label: tCm('copyWikilink'),
+          onClick: () => {
+            void copyToClipboard(`[[${entryId}]]`);
+          },
+        },
+        { label: '', onClick: () => {}, separator: true },
+        {
+          label: tCm('rename'),
+          onClick: () => {
+            // Open detail panel first, then ask DetailPanel to open the
+            // rename dialog. DetailPanel watches renamingEntryId.
+            selectEntry(entryId);
+            openPanel('detail');
+            setRenamingEntryId(entryId);
+          },
+        },
+        {
+          label: tCm('findReferences'),
+          onClick: () => {
+            // Simple v1: count incoming/outgoing and alert. The DetailPanel
+            // already shows these — we just jump to it.
+            selectEntry(entryId);
+            openPanel('detail');
+          },
+        },
+        { label: '', onClick: () => {}, separator: true },
+        {
+          label: tCm('delete'),
+          danger: true,
+          onClick: () => {
+            const title = entry?.title ?? entryId;
+            if (window.confirm(tCm('deleteConfirmEntry', { title }))) {
+              void deleteEntry(entryId);
+            }
+          },
+        },
+      ];
+    },
+    [entries, tCm, selectEntry, openPanel, copyToClipboard, setRenamingEntryId, deleteEntry]
+  );
+
+  const buildEdgeMenuItems = useCallback(
+    (source: string, target: string, type: RelationType): MenuItem[] => {
+      return [
+        {
+          label: tCm('deleteRelation'),
+          danger: true,
+          onClick: () => {
+            if (window.confirm(tCm('deleteConfirmRelation'))) {
+              void deleteRelation(source, target, type);
+            }
+          },
+        },
+      ];
+    },
+    [tCm, deleteRelation]
+  );
+
   if (entries.length === 0) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-gray-500">
@@ -192,6 +315,8 @@ export function MapView() {
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onNodeClick={onNodeClick}
+        onNodeContextMenu={onNodeContextMenu}
+        onEdgeContextMenu={onEdgeContextMenu}
         fitView
         minZoom={0.1}
         maxZoom={2}
@@ -200,6 +325,23 @@ export function MapView() {
         <Background gap={16} size={1} color="#E5E7EB" />
         <Controls />
       </ReactFlow>
+
+      {contextMenu && contextMenu.kind === 'node' && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={buildNodeMenuItems(contextMenu.entryId)}
+          onClose={closeContextMenu}
+        />
+      )}
+      {contextMenu && contextMenu.kind === 'edge' && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={buildEdgeMenuItems(contextMenu.source, contextMenu.target, contextMenu.type)}
+          onClose={closeContextMenu}
+        />
+      )}
 
       {/* Group legend */}
       <div className="pointer-events-none absolute right-3 top-3 z-10 max-h-[calc(100%-2rem)] w-56 overflow-y-auto rounded-md border border-gray-200 bg-white/95 p-2 text-xs shadow-sm backdrop-blur">

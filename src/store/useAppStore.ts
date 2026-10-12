@@ -16,6 +16,11 @@ interface AppState {
   activeKbId: string | null;
   activeKbEntryCount: number;
 
+  /// Entry id that should have its rename dialog opened. DetailPanel
+  /// watches this and shows RenameEntryDialog when it changes (then
+  /// clears it back to null via `clearRenamingEntryId`).
+  renamingEntryId: string | null;
+
   loadEntries: () => Promise<void>;
   selectEntry: (id: string | null) => void;
   toggleRelationType: (type: RelationType) => void;
@@ -39,11 +44,16 @@ interface AppState {
     relationType?: RelationType;
     note?: string;
   }) => Promise<string | null>;
+  deleteEntry: (id: string) => Promise<void>;
 
   refreshKbs: () => Promise<void>;
   addKb: (name: string, path: string) => Promise<void>;
   removeKb: (id: string) => Promise<void>;
   setActiveKb: (id: string) => Promise<void>;
+
+  /// Cycle 3 polish B: request that the rename dialog open for `id`.
+  /// DetailPanel observes this and renders RenameEntryDialog.
+  setRenamingEntryId: (id: string | null) => void;
 
   // ---------- Inline metadata editing + rename (Cycle 2) ----------
   updateMetadata: (id: string, changes: MetadataChanges) => Promise<StoredEntry>;
@@ -69,6 +79,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   kbs: [],
   activeKbId: null,
   activeKbEntryCount: 0,
+  renamingEntryId: null,
 
   loadEntries: async () => {
     set({ isLoading: true, error: null });
@@ -172,6 +183,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (e) {
       set({ error: errMsg(e) });
       return null;
+    }
+  },
+
+  /// Cycle 3 polish B: delete an entry from the disk + DB. If the deleted
+  /// entry is currently selected, clear the selection + close the panel.
+  deleteEntry: async (id) => {
+    try {
+      await invoke('delete_entry', { id });
+      const wasSelected = get().selectedEntryId === id;
+      if (wasSelected) {
+        set({ selectedEntryId: null });
+        usePanelStore.getState().close('detail');
+      }
+      await get().loadEntries();
+    } catch (e) {
+      set({ error: errMsg(e) });
     }
   },
 
@@ -304,4 +331,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     return result;
   },
+
+  /// Cycle 3 polish B: signal that the rename dialog should open for `id`.
+  /// DetailPanel observes this value and renders RenameEntryDialog when
+  /// it changes. The component clears the value back to null on close.
+  setRenamingEntryId: (id) => set({ renamingEntryId: id }),
 }));

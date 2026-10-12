@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/store/useAppStore';
 import { usePanelStore } from '@/store/panelStore';
 import { EntryDialog, type EntryDialogMode } from '@/components/EntryDialog';
+import { ContextMenu, type MenuItem } from '@/components/ContextMenu';
 import type { Entry } from '@shared/types';
 import { SearchBox } from '@/search/SearchBox';
 
@@ -24,6 +25,7 @@ const ROOT_NODE_KEY = '__root__';
 
 export function Sidebar() {
   const { t } = useTranslation('Sidebar');
+  const { t: tCm } = useTranslation('ContextMenu');
   const entries = useAppStore((s) => s.entries);
   const activeKbId = useAppStore((s) => s.activeKbId);
   const activeKbEntryCount = useAppStore((s) => s.activeKbEntryCount);
@@ -31,6 +33,8 @@ export function Sidebar() {
   const loadEntries = useAppStore((s) => s.loadEntries);
   const selectedEntryId = useAppStore((s) => s.selectedEntryId);
   const selectEntry = useAppStore((s) => s.selectEntry);
+  const deleteEntry = useAppStore((s) => s.deleteEntry);
+  const setRenamingEntryId = useAppStore((s) => s.setRenamingEntryId);
   const openPanel = usePanelStore((s) => s.open);
 
   const handleSelect = (id: string) => {
@@ -45,6 +49,74 @@ export function Sidebar() {
 
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [dialogMode, setDialogMode] = useState<EntryDialogMode | null>(null);
+  const [contextMenu, setContextMenu] = useState<
+    { x: number; y: number; entryId: string } | null
+  >(null);
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  const copyToClipboard = useCallback(async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // ignore — clipboard may be unavailable in some webviews
+    }
+  }, []);
+
+  const buildEntryMenuItems = useCallback(
+    (entryId: string): MenuItem[] => {
+      const entry = entries.find((e) => e.id === entryId);
+      return [
+        {
+          label: tCm('copyId'),
+          onClick: () => {
+            void copyToClipboard(entryId);
+          },
+        },
+        {
+          label: tCm('copyWikilink'),
+          onClick: () => {
+            void copyToClipboard(`[[${entryId}]]`);
+          },
+        },
+        { label: '', onClick: () => {}, separator: true },
+        {
+          label: tCm('rename'),
+          onClick: () => {
+            selectEntry(entryId);
+            openPanel('detail');
+            setRenamingEntryId(entryId);
+          },
+        },
+        {
+          label: tCm('findReferences'),
+          onClick: () => {
+            selectEntry(entryId);
+            openPanel('detail');
+          },
+        },
+        { label: '', onClick: () => {}, separator: true },
+        {
+          label: tCm('delete'),
+          danger: true,
+          onClick: () => {
+            const title = entry?.title ?? entryId;
+            if (window.confirm(tCm('deleteConfirmEntry', { title }))) {
+              void deleteEntry(entryId);
+            }
+          },
+        },
+      ];
+    },
+    [entries, tCm, copyToClipboard, selectEntry, openPanel, setRenamingEntryId, deleteEntry]
+  );
+
+  const onEntryContextMenu = useCallback(
+    (event: React.MouseEvent, entryId: string) => {
+      event.preventDefault();
+      setContextMenu({ x: event.clientX, y: event.clientY, entryId });
+    },
+    []
+  );
 
   // 已存在的顶级分组（用于 dialog 选择）
   const topLevelGroups = useMemo(() => {
@@ -142,6 +214,7 @@ export function Sidebar() {
                 selectedEntryId={selectedEntryId}
                 onSelect={handleSelect}
                 onOpenDialog={setDialogMode}
+                onEntryContextMenu={onEntryContextMenu}
               />
             ))}
           </ul>
@@ -157,6 +230,15 @@ export function Sidebar() {
           onClose={() => setDialogMode(null)}
         />
       )}
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={buildEntryMenuItems(contextMenu.entryId)}
+          onClose={closeContextMenu}
+        />
+      )}
     </aside>
   );
 }
@@ -169,6 +251,7 @@ interface TreeRowProps {
   selectedEntryId: string | null;
   onSelect: (id: string) => void;
   onOpenDialog: (mode: EntryDialogMode) => void;
+  onEntryContextMenu: (event: React.MouseEvent, entryId: string) => void;
 }
 
 function TreeRow({
@@ -179,6 +262,7 @@ function TreeRow({
   selectedEntryId,
   onSelect,
   onOpenDialog,
+  onEntryContextMenu,
 }: TreeRowProps) {
   const { t } = useTranslation('Sidebar');
   if (node.kind === 'group') {
@@ -223,6 +307,7 @@ function TreeRow({
                 selectedEntryId={selectedEntryId}
                 onSelect={onSelect}
                 onOpenDialog={onOpenDialog}
+                onEntryContextMenu={onEntryContextMenu}
               />
             ))}
           </ul>
@@ -244,6 +329,7 @@ function TreeRow({
       >
         <button
           onClick={() => onSelect(node.entry.id)}
+          onContextMenu={(e) => onEntryContextMenu(e, node.entry.id)}
           className="flex min-w-0 flex-1 items-start gap-1 truncate py-0.5 pr-1 text-left"
         >
           <span className="mt-0.5 text-xs text-gray-400">📄</span>

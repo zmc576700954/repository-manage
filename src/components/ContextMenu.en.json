@@ -1,0 +1,15 @@
+{
+  "open": "Open in detail",
+  "copyId": "Copy ID",
+  "copyWikilink": "Copy as wikilink",
+  "rename": "Rename...",
+  "findReferences": "Find references",
+  "delete": "Delete",
+  "deleteRelation": "Delete relation",
+  "deleteConfirmEntry": "Delete \"{{title}}\"? This cannot be undone.",
+  "deleteConfirmRelation": "Delete this relation?",
+  "cancel": "Cancel",
+  "referencesInfo": "Incoming: {{incoming}}, Outgoing: {{outgoing}}",
+  "copied": "Copied",
+  "renamedOpenDetail": "Open the entry in the detail panel to rename it."
+}

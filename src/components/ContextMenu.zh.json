@@ -1,0 +1,15 @@
+{
+  "open": "打开详情",
+  "copyId": "复制 ID",
+  "copyWikilink": "复制为 wikilink",
+  "rename": "重命名...",
+  "findReferences": "查看引用",
+  "delete": "删除",
+  "deleteRelation": "删除关系",
+  "deleteConfirmEntry": "确定删除「{{title}}」？此操作不可撤销。",
+  "deleteConfirmRelation": "确定删除这条关系？",
+  "cancel": "取消",
+  "referencesInfo": "传入引用：{{incoming}}，传出引用：{{outgoing}}",
+  "copied": "已复制",
+  "renamedOpenDetail": "请在详情面板中完成重命名。"
+}

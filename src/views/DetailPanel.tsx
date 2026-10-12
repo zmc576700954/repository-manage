@@ -105,6 +105,7 @@ export function DetailPanel() {
   const addInternalReference = useAppStore((s) => s.createRelation);
   const createEntryFromReference = useAppStore((s) => s.createEntryFromReference);
   const closePanel = usePanelStore((s) => s.close);
+  const openPanel = usePanelStore((s) => s.open);
 
   const relLabel = (type: string): string => {
     const known = ['reference', 'derived', 'contradicts', 'supersedes', 'extends', 'custom'];
@@ -126,6 +127,8 @@ export function DetailPanel() {
   const [extLinks, setExtLinks] = useState<ExtLink[]>([]);
   const [showRelDialog, setShowRelDialog] = useState(false);
   const [showRename, setShowRename] = useState(false);
+  const renamingEntryId = useAppStore((s) => s.renamingEntryId);
+  const setRenamingEntryId = useAppStore((s) => s.setRenamingEntryId);
   const [linkBusy, setLinkBusy] = useState<number | null>(null);
   const [linkMsg, setLinkMsg] = useState<Record<number, string>>({});
   const [createDialog, setCreateDialog] = useState<{
@@ -181,6 +184,21 @@ export function DetailPanel() {
       cancelled = true;
     };
   }, [selectedEntryId]);
+
+  /// Cycle 3 polish B: when the store asks us to open the rename dialog
+  /// for an id, open it. We clear the store value back to null so the
+  /// dialog doesn't reopen if the user closes + reopens it.
+  useEffect(() => {
+    if (renamingEntryId !== null && renamingEntryId === selectedEntryId) {
+      setShowRename(true);
+      setRenamingEntryId(null);
+    } else if (renamingEntryId !== null && renamingEntryId !== selectedEntryId) {
+      // Different entry requested: select it first so DetailPanel
+      // re-renders with the new entry, then the dialog will open.
+      selectEntry(renamingEntryId);
+      openPanel('detail');
+    }
+  }, [renamingEntryId, selectedEntryId, selectEntry, openPanel, setRenamingEntryId]);
 
   if (!entry) {
     return null;
