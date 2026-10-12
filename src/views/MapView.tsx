@@ -123,6 +123,7 @@ export function MapView() {
           type: 'card',
           position: { x, y },
           data: {
+            entryId: entry.id,
             title: entry.title,
             group: entry.group,
             hasContentMd: entry.hasContentMd,

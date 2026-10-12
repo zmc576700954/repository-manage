@@ -2,6 +2,7 @@ import { Handle, NodeProps, Position } from 'reactflow';
 import { useTranslation } from 'react-i18next';
 
 export interface NodeCardData {
+  entryId: string;
   title: string;
   group?: string;
   hasContentMd: boolean;
@@ -21,10 +22,16 @@ export function NodeCard({ data, selected }: NodeProps<NodeCardData>) {
     ? 'border-2 border-yellow-400'
     : '';
   const badge = hasError
-    ? { color: 'bg-red-500', title: t('errorTooltip', { count: data.errorCount }) }
+    ? { color: 'bg-red-500', count: data.errorCount ?? 0, title: t('errorTooltip', { count: data.errorCount }) }
     : hasWarning
-    ? { color: 'bg-yellow-400', title: t('warningTooltip', { count: data.warningCount }) }
+    ? { color: 'bg-yellow-400', count: data.warningCount ?? 0, title: t('warningTooltip', { count: data.warningCount }) }
     : null;
+  const onBadgeClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('open-fix-drawer', { detail: { entryId: data.entryId } }));
+    }
+  };
   return (
     <div
       className={`relative max-w-[200px] min-w-[160px] overflow-hidden rounded-lg border bg-white px-3 py-2 shadow-sm transition ${validationBorder} ${
@@ -35,12 +42,13 @@ export function NodeCard({ data, selected }: NodeProps<NodeCardData>) {
       style={{ borderLeft: `4px solid ${accent}` }}
     >
       {badge && (
-        <span
-          className={`absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold text-white ${badge.color}`}
+        <button
+          onClick={onBadgeClick}
+          className={`absolute -right-1 -top-1 flex h-5 min-w-[20px] items-center justify-center rounded-full px-1 text-[10px] font-bold text-white ${badge.color} hover:opacity-80`}
           title={badge.title}
         >
-          !
-        </span>
+          {badge.count}
+        </button>
       )}
       <Handle type="target" position={Position.Top} className="!bg-gray-300" />
       <div className="flex min-w-0 items-center gap-2">
