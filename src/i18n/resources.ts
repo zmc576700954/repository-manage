@@ -32,11 +32,15 @@ import SearchBoxZh from '../search/SearchBox.zh.json';
 import SearchBoxEn from '../search/SearchBox.en.json';
 import MarkdownViewZh from '../markdown/MarkdownView.zh.json';
 import MarkdownViewEn from '../markdown/MarkdownView.en.json';
+import EntryMetadataEditorZh from '../components/i18n/EntryMetadataEditor.zh.json';
+import EntryMetadataEditorEn from '../components/i18n/EntryMetadataEditor.en.json';
+import RenameEntryDialogZh from '../components/i18n/RenameEntryDialog.zh.json';
+import RenameEntryDialogEn from '../components/i18n/RenameEntryDialog.en.json';
 
-export const NS = ['App', 'Errors', 'Settings', 'Sidebar', 'NodeCard', 'RelationDialog', 'MapView', 'EntryDialog', 'DetailPanel', 'ValidationPanel', 'Validation', 'Error', 'Fix', 'FilterPanel', 'RightPanel', 'SearchBox', 'MarkdownView'] as const;
+export const NS = ['App', 'Errors', 'Settings', 'Sidebar', 'NodeCard', 'RelationDialog', 'MapView', 'EntryDialog', 'DetailPanel', 'ValidationPanel', 'Validation', 'Error', 'Fix', 'FilterPanel', 'RightPanel', 'SearchBox', 'MarkdownView', 'EntryMetadataEditor', 'RenameEntryDialog'] as const;
 export type Namespace = (typeof NS)[number];
 
 export const resources = {
-  zh: { App: AppZh, Errors: ErrorsZh, Settings: SettingsZh, Sidebar: SidebarZh, NodeCard: NodeCardZh, RelationDialog: RelationDialogZh, MapView: MapViewZh, EntryDialog: EntryDialogZh, DetailPanel: DetailPanelZh, ValidationPanel: ValidationPanelZh, Validation: ValidationZh, Error: ErrorZh, Fix: FixZh, FilterPanel: FilterPanelZh, RightPanel: RightPanelZh, SearchBox: SearchBoxZh, MarkdownView: MarkdownViewZh },
-  en: { App: AppEn, Errors: ErrorsEn, Settings: SettingsEn, Sidebar: SidebarEn, NodeCard: NodeCardEn, RelationDialog: RelationDialogEn, MapView: MapViewEn, EntryDialog: EntryDialogEn, DetailPanel: DetailPanelEn, ValidationPanel: ValidationPanelEn, Validation: ValidationEn, Error: ErrorEn, Fix: FixEn, FilterPanel: FilterPanelEn, RightPanel: RightPanelEn, SearchBox: SearchBoxEn, MarkdownView: MarkdownViewEn },
+  zh: { App: AppZh, Errors: ErrorsZh, Settings: SettingsZh, Sidebar: SidebarZh, NodeCard: NodeCardZh, RelationDialog: RelationDialogZh, MapView: MapViewZh, EntryDialog: EntryDialogZh, DetailPanel: DetailPanelZh, ValidationPanel: ValidationPanelZh, Validation: ValidationZh, Error: ErrorZh, Fix: FixZh, FilterPanel: FilterPanelZh, RightPanel: RightPanelZh, SearchBox: SearchBoxZh, MarkdownView: MarkdownViewZh, EntryMetadataEditor: EntryMetadataEditorZh, RenameEntryDialog: RenameEntryDialogZh },
+  en: { App: AppEn, Errors: ErrorsEn, Settings: SettingsEn, Sidebar: SidebarEn, NodeCard: NodeCardEn, RelationDialog: RelationDialogEn, MapView: MapViewEn, EntryDialog: EntryDialogEn, DetailPanel: DetailPanelEn, ValidationPanel: ValidationPanelEn, Validation: ValidationEn, Error: ErrorEn, Fix: FixEn, FilterPanel: FilterPanelEn, RightPanel: RightPanelEn, SearchBox: SearchBoxEn, MarkdownView: MarkdownViewEn, EntryMetadataEditor: EntryMetadataEditorEn, RenameEntryDialog: RenameEntryDialogEn },
 } as const;
