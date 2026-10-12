@@ -1,5 +1,6 @@
 pub mod entry;
 pub mod error;
+pub mod fs;
 pub mod index;
 pub mod kb_registry;
 pub mod layout_store;
