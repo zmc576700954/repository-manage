@@ -16,6 +16,11 @@
     "database-op": "{{message}}",
     "io-op": "{{message}}",
     "other": "{{message}}",
-    "fallback": "Operation failed: {{message}}"
+    "fallback": "Operation failed: {{message}}",
+    "metadata-invalid-field": "Invalid {{field}}: {{reason}}",
+    "rename-conflict": "Cannot rename: an entry with id '{{newId}}' already exists",
+    "rename-target-file-exists": "Cannot rename: file already exists at {{path}}",
+    "external-edit-detected": "External edit detected on {{path}}; please reload",
+    "cascade-failed": "Cascade failed on {{failedFiles}}: {{reason}}"
   }
 }

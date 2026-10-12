@@ -16,6 +16,11 @@
     "database-op": "{{message}}",
     "io-op": "{{message}}",
     "other": "{{message}}",
-    "fallback": "操作失败: {{message}}"
+    "fallback": "操作失败: {{message}}",
+    "metadata-invalid-field": "{{field}} 无效：{{reason}}",
+    "rename-conflict": "无法重命名：id '{{newId}}' 已存在",
+    "rename-target-file-exists": "无法重命名：文件已存在于 {{path}}",
+    "external-edit-detected": "检测到 {{path}} 被外部修改，请重新加载",
+    "cascade-failed": "级联更新失败：{{failedFiles}}（{{reason}}）"
   }
 }
