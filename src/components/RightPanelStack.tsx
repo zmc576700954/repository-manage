@@ -3,13 +3,7 @@ import { usePanelStore, PanelType } from '@/store/panelStore';
 import { RightPanel } from './RightPanel';
 import { ValidationPanel } from './ValidationPanel';
 import { Settings } from '@/views/Settings';
-
-const panelTitles: Record<PanelType, string> = {
-  validation: 'Validation',
-  settings: 'Settings',
-  filter: 'Filter',
-  detail: 'Detail',
-};
+import { DetailPanel } from '@/views/DetailPanel';
 
 export const RightPanelStack: React.FC = () => {
   const { openPanels, close, width } = usePanelStore();
@@ -18,20 +12,31 @@ export const RightPanelStack: React.FC = () => {
 
   return (
     <div
-      className="flex h-full flex-col border-l border-gray-200 bg-gray-50"
+      className="flex h-full flex-col gap-2 border-l border-gray-200 bg-gray-50 p-2"
       style={{ width }}
     >
       {openPanels.map((panelType) => (
         <RightPanel
           key={panelType}
-          title={panelTitles[panelType]}
+          type={panelType}
           onClose={() => close(panelType)}
         >
-          {panelType === 'validation' && <ValidationPanel />}
-          {panelType === 'settings' && <Settings />}
-          {panelType === 'filter' && <div>Filter placeholder</div>}
+          <PanelContent type={panelType} />
         </RightPanel>
       ))}
     </div>
   );
+};
+
+const PanelContent: React.FC<{ type: PanelType }> = ({ type }) => {
+  switch (type) {
+    case 'detail':
+      return <DetailPanel />;
+    case 'validation':
+      return <ValidationPanel />;
+    case 'settings':
+      return <Settings />;
+    case 'filter':
+      return <div className="p-4 text-sm text-gray-500">Filter placeholder</div>;
+  }
 };
