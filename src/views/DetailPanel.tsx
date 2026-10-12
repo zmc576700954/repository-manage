@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/store/useAppStore';
 import { usePanelStore } from '@/store/panelStore';
 import { RelationDialog } from '@/components/RelationDialog';
+import { EntryMetadataEditor } from '@/components/EntryMetadataEditor';
+import { RenameEntryDialog } from '@/components/RenameEntryDialog';
 import { MarkdownView } from '@/markdown/MarkdownView';
 import type { Entry, Relation } from '@shared/types';
 
@@ -123,6 +125,7 @@ export function DetailPanel() {
   const [viewMode, setViewMode] = useState<'rendered' | 'source'>('rendered');
   const [extLinks, setExtLinks] = useState<ExtLink[]>([]);
   const [showRelDialog, setShowRelDialog] = useState(false);
+  const [showRename, setShowRename] = useState(false);
   const [linkBusy, setLinkBusy] = useState<number | null>(null);
   const [linkMsg, setLinkMsg] = useState<Record<number, string>>({});
   const [createDialog, setCreateDialog] = useState<{
@@ -299,6 +302,13 @@ export function DetailPanel() {
             </p>
           </div>
           <button
+            onClick={() => setShowRename(true)}
+            className="shrink-0 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-100"
+            title={t('renameTitle')}
+          >
+            ✎
+          </button>
+          <button
             onClick={() => {
               selectEntry(null);
               closePanel('detail');
@@ -312,24 +322,8 @@ export function DetailPanel() {
 
         {/* Scrollable content area */}
         <div className="flex-1 overflow-y-auto">
-          {/* Tags */}
-          {entry.tags.length > 0 && (
-            <div className="border-b border-gray-200 p-4">
-              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-500">
-                {t('tagsHeader')}
-              </h3>
-              <div className="flex flex-wrap gap-1">
-                {entry.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700"
-                  >
-                    #{tag}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Inline metadata editor (title/tags/labels/status) */}
+          <EntryMetadataEditor entry={entry} />
 
           {/* Markdown content */}
           <div className="border-b border-gray-200 p-4">
@@ -580,6 +574,19 @@ export function DetailPanel() {
       </div>
       {showRelDialog && (
         <RelationDialog fromId={entry.id} onClose={() => setShowRelDialog(false)} />
+      )}
+      {showRename && (
+        <RenameEntryDialog
+          entryId={entry.id}
+          initialName={entry.id.split('-').pop() ?? entry.id}
+          initialGroup={entry.group ?? ''}
+          existingGroups={existingGroups}
+          onClose={() => setShowRename(false)}
+          onSuccess={(newId) => {
+            setShowRename(false);
+            selectEntry(newId);
+          }}
+        />
       )}
       {createDialog && (
         <CreateEntryDialog
