@@ -271,21 +271,28 @@ export function MapView() {
   const edges: Edge[] = useMemo(() => {
     const entryIds = new Set(entries.map((e) => e.id));
     const result: Edge[] = [];
+    const seen = new Set<string>();
     for (const entry of entries) {
       for (const rel of entry.relations) {
-        if (!relationFilter.has(rel.type as RelationType)) continue;
+        // get_relations 会把一条关系同时挂到 from 与 to 两个 entry 上；
+        // 只渲染出边，避免自环和同一条边出现两次。
+        if (rel.fromId !== entry.id) continue;
+        if (!relationFilter.has(rel.relationType)) continue;
         if (!entryIds.has(rel.toId)) continue;
+        const edgeId = `${rel.fromId}-${rel.toId}-${rel.relationType}`;
+        if (seen.has(edgeId)) continue;
+        seen.add(edgeId);
         result.push({
-          id: `${entry.id}-${rel.toId}-${rel.type}`,
-          source: entry.id,
+          id: edgeId,
+          source: rel.fromId,
           target: rel.toId,
-          label: rel.type,
+          label: rel.relationType,
           style: {
-            stroke: RELATION_COLORS[rel.type as RelationType] || RELATION_COLORS.custom,
+            stroke: RELATION_COLORS[rel.relationType] || RELATION_COLORS.custom,
             strokeWidth: 1.5,
           },
           labelStyle: { fontSize: 10, fill: '#6B7280' },
-          animated: rel.type === 'derived',
+          animated: rel.relationType === 'derived',
         });
       }
     }

@@ -467,14 +467,14 @@ export function DetailPanel() {
                         → {lookupTitle(entries, rel.toId) ?? rel.toId}
                       </button>
                       <p className="mt-0.5 text-xs text-gray-500">
-                        {relDesc(rel.type, 'outgoing')}
+                        {relDesc(rel.relationType, 'outgoing')}
                       </p>
                       {rel.note && (
                         <p className="mt-0.5 text-xs italic text-gray-500">"{rel.note}"</p>
                       )}
                     </div>
                     <button
-                      onClick={() => deleteRelation(rel.fromId, rel.toId, rel.type)}
+                      onClick={() => deleteRelation(rel.fromId, rel.toId, rel.relationType)}
                       className="shrink-0 rounded px-1.5 py-0.5 text-xs text-red-600 hover:bg-red-50"
                       title={t('deleteRelTitle')}
                     >
@@ -508,7 +508,7 @@ export function DetailPanel() {
                       ← {lookupTitle(entries, rel.fromId) ?? rel.fromId}
                     </button>
                     <p className="mt-0.5 text-xs text-gray-500">
-                      {relDesc(rel.type, 'incoming')}
+                      {relDesc(rel.relationType, 'incoming')}
                     </p>
                     {rel.note && (
                       <p className="mt-0.5 text-xs italic text-gray-500">"{rel.note}"</p>

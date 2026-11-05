@@ -13,17 +13,17 @@ export interface KBInfo {
 }
 
 export interface Relation {
-  id: string;
+  id?: string;
   fromId: string;
   toId: string;
-  type: RelationType;
+  relationType: RelationType;
   note?: string;
 }
 
 export interface Attachment {
   path: string;
   caption?: string;
-  type: 'image' | 'document' | 'other';
+  attachmentType: 'image' | 'document' | 'other';
 }
 
 export interface Entry {
