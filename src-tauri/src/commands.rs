@@ -264,6 +264,304 @@ pub async fn get_entry_content(
     }
 }
 
+// ---------- 正文编辑与无损排版 ----------
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveEntryResult {
+    /// 内容与磁盘上的原文一致时为 `false`（不产生写入，也不触发版本 hook）。
+    pub changed: bool,
+    pub bytes: usize,
+    /// 保存完成时间（epoch 毫秒）。前端只用于展示“已保存”状态。
+    pub saved_at_ms: u64,
+    /// 落盘后的完整正文，前端可直接用它同步编辑器与预览。
+    pub content: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormatPreview {
+    pub original: String,
+    pub formatted: String,
+    pub changed: bool,
+    pub changed_lines: usize,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+async fn content_path_for(state: &AppState, id: &str) -> AppResult<PathBuf> {
+    let idx = state.index.read().await;
+    idx.get_entry_content_path(id)?
+        .ok_or_else(|| AppError::EntryNotFound { id: id.to_string() })
+}
+
+fn read_content(id: &str, path: &Path) -> AppResult<String> {
+    match std::fs::read_to_string(path) {
+        Ok(content) => Ok(content),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(AppError::EntryContentMissing { id: id.to_string() })
+        }
+        Err(e) => Err(AppError::io(
+            format!("read content {}", path.display()),
+            e,
+        )),
+    }
+}
+
+/// 保存正文。调用方必须已持有 `state.write_lock`。
+///
+/// 顺序：读旧内容 → 需要时原子替换 → 登记本地写入（抑制 watcher 的
+/// 回声刷新）→ 版本 hook（显式保存即使内容未变也会尝试记录）→ 重建索引。
+async fn write_entry_content(
+    state: &AppState,
+    id: &str,
+    content: &str,
+    origin: crate::history::SaveOrigin,
+    restored_from: Option<String>,
+) -> AppResult<SaveEntryResult> {
+    let kb_root = kb_root_or_err(state).await?;
+    let path = content_path_for(state, id).await?;
+    let previous = read_content(id, &path)?;
+    let changed = previous != content;
+
+    if changed {
+        let tmp = crate::content_io::write_atomic(&path, content)?;
+        // 临时文件在 rename 后已消失（期望 Missing）；目标文件按内容哈希登记。
+        // watcher 的这一批事件全部命中时才会判为 local-write。
+        state.note_local_write(&tmp);
+        state.note_local_write(&path);
+
+        if let Ok(kb_root) = kb_root_or_err(state).await {
+            let idx = state.index.read().await;
+            let _ = idx.rebuild(&kb_root); // best-effort；前端随后会取快照
+        }
+    }
+
+    // 版本 hook：显式保存即使内容未变也要调用（可能是自动保存刚写过盘但
+    // 还没生成版本）；自动保存内容未变则完全跳过。
+    if changed || origin != crate::history::SaveOrigin::Autosave {
+        if let Err(e) = crate::history::on_content_saved(&crate::history::ContentSavedEvent {
+            kb_root,
+            entry_id: id.to_string(),
+            content_path: path,
+            previous,
+            next: content.to_string(),
+            origin,
+            restored_from,
+        }) {
+            // 版本记录失败不能阻止用户保存。
+            eprintln!("[history] record version failed for {id}: {e}");
+        }
+    }
+
+    Ok(SaveEntryResult {
+        changed,
+        bytes: content.len(),
+        saved_at_ms: now_ms(),
+        content: content.to_string(),
+    })
+}
+
+/// 编辑器显式保存（按钮或 Cmd/Ctrl+S）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn save_entry_content(
+    state: State<'_, AppState>,
+    id: String,
+    content: String,
+) -> AppResult<SaveEntryResult> {
+    let _guard = state.write_lock.lock().await;
+    write_entry_content(
+        &state,
+        &id,
+        &content,
+        crate::history::SaveOrigin::Editor,
+        None,
+    )
+    .await
+}
+
+/// 自动保存：写盘，但版本记录受 5 分钟节流约束（在 history 层决定）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn autosave_entry_content(
+    state: State<'_, AppState>,
+    id: String,
+    content: String,
+) -> AppResult<SaveEntryResult> {
+    let _guard = state.write_lock.lock().await;
+    write_entry_content(
+        &state,
+        &id,
+        &content,
+        crate::history::SaveOrigin::Autosave,
+        None,
+    )
+    .await
+}
+
+/// 纯读：返回排版前后的内容，供前端展示差异并让用户确认。
+/// 不做任何写入。
+async fn preview_format_impl(state: &AppState, id: &str) -> AppResult<FormatPreview> {
+    let path = content_path_for(state, id).await?;
+    let original = read_content(id, &path)?;
+    let outcome = crate::formatter::format_content(&original);
+    Ok(FormatPreview {
+        original,
+        formatted: outcome.formatted,
+        changed: outcome.changed,
+        changed_lines: outcome.changed_lines,
+    })
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn preview_format_entry(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<FormatPreview> {
+    preview_format_impl(&state, &id).await
+}
+
+/// 用户确认后写回排版结果。重新读取当前磁盘内容再排版，避免把预览之后
+/// 被外部修改的内容覆盖掉（只写回“当前内容排版后的版本”）。
+async fn apply_format_impl(state: &AppState, id: &str) -> AppResult<SaveEntryResult> {
+    let _guard = state.write_lock.lock().await;
+    let path = content_path_for(state, id).await?;
+    let original = read_content(id, &path)?;
+    let outcome = crate::formatter::format_content(&original);
+    write_entry_content(
+        state,
+        id,
+        &outcome.formatted,
+        crate::history::SaveOrigin::Format,
+        None,
+    )
+    .await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn apply_format_entry(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<SaveEntryResult> {
+    apply_format_impl(&state, &id).await
+}
+
+/// 同一 KB 内的文档迁移：保持文件名/目录名，只改变所在目录。
+///
+/// 复用 `execute_rename_impl` 的完整管线（id 派生、级联 `[[id]]`、布局键、
+/// 附件随目录一起移动、失败整体回滚），因此不会出现半移动状态。
+/// 跨 KB 迁移不在本命令范围内。
+pub async fn move_entry_impl(
+    state: &AppState,
+    id: String,
+    target_dir: String,
+) -> AppResult<RenameResult> {
+    let old_path = {
+        let idx = state.index.read().await;
+        idx.get_entry_path(&id)?
+            .ok_or_else(|| AppError::EntryNotFound { id: id.clone() })?
+    };
+    let name = if old_path.is_dir() {
+        old_path.file_name()
+    } else {
+        old_path.file_stem()
+    }
+    .and_then(|n| n.to_str())
+    .ok_or_else(|| AppError::NameEmpty)?
+    .to_string();
+
+    execute_rename_impl(state, id, name, target_dir, true).await
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn move_entry(
+    state: State<'_, AppState>,
+    id: String,
+    target_dir: String,
+) -> AppResult<RenameResult> {
+    move_entry_impl(&state, id, target_dir).await
+}
+
+// ---------- 版本历史 ----------
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn list_entry_versions(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<Vec<crate::history::VersionMeta>> {
+    let kb_root = kb_root_or_err(&state).await?;
+    crate::history::list_versions(&kb_root, &id)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_entry_version_content(
+    state: State<'_, AppState>,
+    id: String,
+    version_id: String,
+) -> AppResult<Option<String>> {
+    let kb_root = kb_root_or_err(&state).await?;
+    crate::history::read_version_content(&kb_root, &id, &version_id)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_history_warnings(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<crate::history::HistoryWarnings> {
+    let kb_root = kb_root_or_err(&state).await?;
+    crate::history::warnings(&kb_root, &id)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn preview_trim_entry_history(
+    state: State<'_, AppState>,
+    id: String,
+    keep_version_id: String,
+) -> AppResult<crate::history::TrimPreview> {
+    let kb_root = kb_root_or_err(&state).await?;
+    crate::history::trim_preview(&kb_root, &id, &keep_version_id)
+}
+
+/// 手动裁剪：不可恢复，UI 必须先展示预览并二次确认。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn trim_entry_history(
+    state: State<'_, AppState>,
+    id: String,
+    keep_version_id: String,
+) -> AppResult<crate::history::TrimOutcome> {
+    let _guard = state.write_lock.lock().await;
+    let kb_root = kb_root_or_err(&state).await?;
+    crate::history::trim_history(&kb_root, &id, &keep_version_id)
+}
+
+/// 回退到指定版本：把旧正文写回当前文件，并追加一条带 `restored_from`
+/// 的新版本（不覆盖、不删除原版本）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn restore_entry_version(
+    state: State<'_, AppState>,
+    id: String,
+    version_id: String,
+) -> AppResult<SaveEntryResult> {
+    let _guard = state.write_lock.lock().await;
+    let kb_root = kb_root_or_err(&state).await?;
+    let content = crate::history::read_version_content(&kb_root, &id, &version_id)?
+        .ok_or_else(|| AppError::VersionContentUnavailable {
+            version_id: version_id.clone(),
+        })?;
+    write_entry_content(
+        &state,
+        &id,
+        &content,
+        crate::history::SaveOrigin::Restore,
+        Some(version_id),
+    )
+    .await
+}
+
 #[tauri::command(rename_all = "camelCase")]
 pub async fn create_relation(
     state: State<'_, AppState>,
@@ -1237,6 +1535,48 @@ pub struct RenameResult {
     pub updated_files: Vec<String>,
 }
 
+/// 回滚 rename/move 已完成的副作用：DB id、`@synapse-id`、文件位置与级联
+/// 引用，最后重建索引。返回无法回滚的条目，供上层拼进错误原因。
+async fn rollback_rename_state(
+    state: &AppState,
+    kb_root: &Path,
+    old_path: &Path,
+    new_path: &Path,
+    old_id: &str,
+    new_id: &str,
+    id_file: &Path,
+    pre_cascade_cache: &[(PathBuf, String)],
+) -> Vec<String> {
+    let mut rollback_errors: Vec<String> = Vec::new();
+    {
+        let idx = state.index.read().await;
+        if let Err(re) = idx.rename_entry_id(new_id, old_id) {
+            rollback_errors.push(format!("rename_entry_id: {re}"));
+        }
+    }
+    if let Err(re) = update_synapse_id_in_file(id_file, new_id, old_id) {
+        rollback_errors.push(format!("restore @synapse-id: {re}"));
+    }
+    if let Err(re) = std::fs::rename(new_path, old_path) {
+        rollback_errors.push(format!(
+            "move {} back to {}: {re}",
+            new_path.display(),
+            old_path.display()
+        ));
+    }
+    for (path, original) in pre_cascade_cache {
+        if let Err(re) = std::fs::write(path, original) {
+            rollback_errors.push(format!("restore cascade {}: {re}", path.display()));
+        }
+    }
+    // 让索引与磁盘重新一致（旧路径重新出现）。
+    {
+        let idx = state.index.read().await;
+        let _ = idx.rebuild(kb_root);
+    }
+    rollback_errors
+}
+
 /// Atomically rename/move an entry: cascade `[[old_id]]` references in
 /// other files, move the .md to its new path, update the
 /// `@synapse-id` comment, migrate the SQLite row + relation edges,
@@ -1402,39 +1742,56 @@ pub async fn execute_rename_impl(
         }
     }
 
-    // 8) Transfer layout position (old id → new id).
+    // 8) 历史目录跟随 id 迁移。与布局一样是迁移的一部分：失败就整体回滚，
+    //    不能留下“文档移动了但历史还挂旧 id”的半成品。
+    if let Err(e) = crate::history::migrate_entry_history(&kb_root, &id, &new_id) {
+        let rollback_errors = rollback_rename_state(
+            state,
+            &kb_root,
+            &old_path,
+            &new_path,
+            &id,
+            &new_id,
+            &id_file,
+            &pre_cascade_cache,
+        )
+        .await;
+        let reason = if rollback_errors.is_empty() {
+            e.to_string()
+        } else {
+            format!(
+                "{e}; rollback incomplete: {}",
+                rollback_errors.join("; ")
+            )
+        };
+        return Err(AppError::HistoryMigrationFailed { reason });
+    }
+
+    // 9) Transfer layout position (old id → new id).
     //
     // 布局迁移失败不能只是打日志：否则重命名成功、坐标却静默丢失，节点
-    // 会在前端被当作新节点重新布局。这里选择整体回滚——把 DB 行、`@synapse-id`、
-    // 文件移动和级联引用全部恢复，保证“要么改名+布局一起成功，要么完全没变”。
+    // 会在前端被当作新节点重新布局。这里选择整体回滚——把历史目录、DB 行、
+    // `@synapse-id`、文件移动和级联引用全部恢复，保证“要么改名+布局一起成功，
+    // 要么完全没变”。
     if let Err(e) = crate::layout_store::rename_key(&kb_root, &id, &new_id) {
         let mut rollback_errors: Vec<String> = Vec::new();
-        {
-            let idx = state.index.read().await;
-            if let Err(re) = idx.rename_entry_id(&new_id, &id) {
-                rollback_errors.push(format!("rename_entry_id: {re}"));
-            }
+        // 历史目录已经迁到 new_id 下，先搬回旧 id。
+        if let Err(re) = crate::history::migrate_entry_history(&kb_root, &new_id, &id) {
+            rollback_errors.push(format!("restore history: {re}"));
         }
-        if let Err(re) = update_synapse_id_in_file(&id_file, &new_id, &id) {
-            rollback_errors.push(format!("restore @synapse-id: {re}"));
-        }
-        if let Err(re) = std::fs::rename(&new_path, &old_path) {
-            rollback_errors.push(format!(
-                "move {} back to {}: {re}",
-                new_path.display(),
-                old_path.display()
-            ));
-        }
-        for (path, original) in &pre_cascade_cache {
-            if let Err(re) = std::fs::write(path, original) {
-                rollback_errors.push(format!("restore cascade {}: {re}", path.display()));
-            }
-        }
-        // 让索引与磁盘重新一致（旧路径重新出现）。
-        {
-            let idx = state.index.read().await;
-            let _ = idx.rebuild(&kb_root);
-        }
+        rollback_errors.extend(
+            rollback_rename_state(
+                state,
+                &kb_root,
+                &old_path,
+                &new_path,
+                &id,
+                &new_id,
+                &id_file,
+                &pre_cascade_cache,
+            )
+            .await,
+        );
         let reason = if rollback_errors.is_empty() {
             e.to_string()
         } else {
@@ -1446,17 +1803,17 @@ pub async fn execute_rename_impl(
         return Err(AppError::LayoutMigrationFailed { reason });
     }
 
-    // 9) Rebuild the index to refresh derived data (path, group, etc).
+    // 10) Rebuild the index to refresh derived data (path, group, etc).
     {
         let idx = state.index.read().await;
         let _ = idx.rebuild(&kb_root);
     }
 
-    // 10) 记录 old id → new id。watcher 之后重建时前后快照都已是新 id，
+    // 11) 记录 old id → new id。watcher 之后重建时前后快照都已是新 id，
     //     `added`/`removed` 为空；这条增量让 `kb-changed` 仍能表达重命名。
     state.record_rename(&id, &new_id);
 
-    // 11) 登记本次成功写过的所有路径（旧文件、新文件、@synapse-id 文件、
+    // 12) 登记本次成功写过的所有路径（旧文件、新文件、@synapse-id 文件、
     //     级联更新的引用文件）。watcher 的事件路径全部命中时才会把这次
     //     重建标为 `local-write`；失败回滚的分支不会走到这里。
     if old_is_dir {
@@ -1582,8 +1939,25 @@ mod tests {
     use crate::parser::metadata_updater::MetadataChanges;
     use std::fs;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
     use tempfile::tempdir;
+
+    /// 并行测试创建临时 DB / registry 时不能只靠时间戳做文件名：
+    /// macOS 上 `SystemTime::now()` 的精度只有几百纳秒，同一时刻启动的多个
+    /// 测试会拿到相同的 nanos，落到同一个 sqlite 文件上互相 rebuild，
+    /// 表现为 `rename_entry_id: Query returned no rows` 之类的偶发失败。
+    /// 进程内自增序号保证每个测试状态的路径唯一。
+    static TEST_TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn unique_test_suffix() -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let seq = TEST_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        format!("{nanos}-{seq}")
+    }
 
     fn kb_root() -> PathBuf {
         PathBuf::from("/tmp/kb-root")
@@ -1781,19 +2155,13 @@ mod tests {
 
         let db_path = std::env::temp_dir().join(format!(
             "synapse-cmd-test-{}.db",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
+            unique_test_suffix()
         ));
         let index = Index::open(&db_path).expect("open test index");
 
         let registry_file = std::env::temp_dir().join(format!(
             "synapse-cmd-test-kbs-{}.json",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
+            unique_test_suffix()
         ));
         let registry = KbRegistry::empty_at(registry_file);
 
@@ -2409,6 +2777,124 @@ End of note.
         assert!(state.take_pending_renames().is_empty());
     }
 
+    /// 移动文档时历史目录必须跟随 id 迁移，不能留在旧 id 下。
+    #[tokio::test]
+    async fn execute_move_migrates_history_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::create_dir_all(kb_root.join("old")).unwrap();
+        std::fs::create_dir_all(kb_root.join("new")).unwrap();
+        std::fs::write(
+            kb_root.join("old/target.md"),
+            "<!-- @synapse-id: old-target -->\n# Target\n",
+        )
+        .unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+        crate::history::record_version(
+            &kb_root,
+            "old-target",
+            "",
+            "# history v1\n",
+            crate::history::SaveOrigin::Editor,
+            None,
+        )
+        .unwrap();
+        assert!(crate::history::list_versions(&kb_root, "old-target").unwrap().len() == 1);
+
+        let result = execute_rename_impl(
+            &state,
+            "old-target".to_string(),
+            "target".to_string(),
+            "new".to_string(),
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.new_id, "new-target");
+        assert!(kb_root.join("new/target.md").exists());
+
+        let versions = crate::history::list_versions(&kb_root, "new-target").unwrap();
+        assert_eq!(versions.len(), 1, "history must follow the new id");
+        assert!(
+            crate::history::list_versions(&kb_root, "old-target").unwrap().is_empty(),
+            "old history directory must be gone"
+        );
+    }
+
+    /// 历史迁移失败必须触发整体回滚（而不是像旧的 best-effort 那样只打日志）。
+    #[tokio::test]
+    async fn execute_move_rolls_back_when_history_migration_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::create_dir_all(kb_root.join("old")).unwrap();
+        std::fs::write(
+            kb_root.join("old/target.md"),
+            "<!-- @synapse-id: old-target -->\n# Target\n\nSee [[hub]].\n",
+        )
+        .unwrap();
+        std::fs::write(
+            kb_root.join("hub.md"),
+            "<!-- @synapse-id: hub -->\n# Hub\n\nLinks to [[old-target]].\n",
+        )
+        .unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+        crate::layout_store::update_position(&kb_root, "old-target", 10.0, 20.0).unwrap();
+        crate::history::record_version(
+            &kb_root,
+            "old-target",
+            "",
+            "# history v1\n",
+            crate::history::SaveOrigin::Editor,
+            None,
+        )
+        .unwrap();
+        // 目标 id 已有历史目录 → migrate_entry_history 拒绝迁移。
+        std::fs::create_dir_all(crate::history::history_dir(&kb_root, "new-target")).unwrap();
+
+        let err = execute_rename_impl(
+            &state,
+            "old-target".to_string(),
+            "target".to_string(),
+            "new".to_string(),
+            true,
+        )
+        .await
+        .expect_err("history migration failure must abort the move");
+        assert!(matches!(err, AppError::HistoryMigrationFailed { .. }));
+
+        // 文件、id、级联引用、布局全部保持原状。
+        assert!(kb_root.join("old/target.md").exists(), "old file must be restored");
+        assert!(!kb_root.join("new/target.md").exists(), "new file must be removed");
+        let content = std::fs::read_to_string(kb_root.join("old/target.md")).unwrap();
+        assert!(content.contains("<!-- @synapse-id: old-target -->"));
+        let hub = std::fs::read_to_string(kb_root.join("hub.md")).unwrap();
+        assert!(hub.contains("[[old-target]]"), "cascade must be rolled back: {hub}");
+        let positions = crate::layout_store::load_positions(&kb_root);
+        assert!(positions.contains_key("old-target"));
+        assert!(!positions.contains_key("new-target"));
+        {
+            let idx = state.index.read().await;
+            let entries = idx.get_all_entries().unwrap();
+            assert!(entries.iter().any(|e| e.id == "old-target"));
+            assert!(!entries.iter().any(|e| e.id == "new-target"));
+        }
+        // 旧历史仍在，且回滚后来没有把它的目录搬走。
+        assert_eq!(
+            crate::history::list_versions(&kb_root, "old-target").unwrap().len(),
+            1
+        );
+        assert!(!state.all_paths_locally_written(&[kb_root.join("new/target.md")]));
+        assert!(state.take_pending_renames().is_empty());
+    }
+
     /// Code blocks must NOT be touched by cascade. A `[[target]]` inside
     /// a ``` block should be preserved verbatim.
     #[tokio::test]
@@ -2651,5 +3137,280 @@ End of note.
         assert_eq!(entries[0].id, "my-note-v2");
         assert_eq!(entries[0].group.as_deref(), Some("frontend"));
         assert_eq!(entries[0].dir.as_deref(), Some("frontend"));
+    }
+
+    // ---------- 正文编辑器：保存 / 自动保存草稿的服务端部分 ----------
+
+    /// 显式保存：原子替换、登记本地写入、内容相同不重复写。
+    #[tokio::test]
+    async fn write_entry_content_saves_and_marks_local_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        let path = kb_root.join("note.md");
+        std::fs::write(&path, "# Note\n\n原始内容\n").unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        let next = "# Note\n\n新的内容\n";
+        let result = {
+            let _guard = state.write_lock.lock().await;
+            write_entry_content(
+                &state,
+                "note",
+                next,
+                crate::history::SaveOrigin::Editor,
+                None,
+            )
+            .await
+            .unwrap()
+        };
+
+        assert!(result.changed);
+        assert_eq!(result.content, next);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), next);
+        let md_files: Vec<_> = std::fs::read_dir(&kb_root)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                name.ends_with(".md") && !name.starts_with(".synapse-tmp-")
+            })
+            .collect();
+        assert_eq!(md_files.len(), 1, "保存后不应残留临时文件");
+
+        // 本次写入的路径能被识别为 local-write（watcher 不会把它当外部变更）。
+        assert!(state.all_paths_locally_written(std::slice::from_ref(&path)));
+
+        // 内容相同 → changed=false，不产生写入。
+        let same = {
+            let _guard = state.write_lock.lock().await;
+            write_entry_content(
+                &state,
+                "note",
+                next,
+                crate::history::SaveOrigin::Editor,
+                None,
+            )
+            .await
+            .unwrap()
+        };
+        assert!(!same.changed);
+    }
+
+    /// 回退：写回旧正文并追加一条带 restored_from 的新版本。
+    #[tokio::test]
+    async fn restore_entry_version_appends_new_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        let path = kb_root.join("note.md");
+        std::fs::write(&path, "v1\n").unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        // 显式保存（内容未变也算一次）→ 初始版本；再两次变更 → 共 3 版。
+        {
+            let _guard = state.write_lock.lock().await;
+            write_entry_content(&state, "note", "v1\n", crate::history::SaveOrigin::Editor, None)
+                .await
+                .unwrap();
+            write_entry_content(&state, "note", "v2\n", crate::history::SaveOrigin::Editor, None)
+                .await
+                .unwrap();
+            write_entry_content(&state, "note", "v3\n", crate::history::SaveOrigin::Editor, None)
+                .await
+                .unwrap();
+        }
+        let versions = crate::history::list_versions(&kb_root, "note").unwrap();
+        assert_eq!(versions.len(), 3, "初始内容 + 两次保存 = 3 版");
+        let first_id = versions[0].version_id.clone();
+
+        let restored = {
+            let _guard = state.write_lock.lock().await;
+            let content = crate::history::read_version_content(&kb_root, "note", &first_id)
+                .unwrap()
+                .expect("小文件版本必须可回退");
+            write_entry_content(
+                &state,
+                "note",
+                &content,
+                crate::history::SaveOrigin::Restore,
+                Some(first_id.clone()),
+            )
+            .await
+            .unwrap()
+        };
+        assert!(restored.changed);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "v1\n");
+
+        let after = crate::history::list_versions(&kb_root, "note").unwrap();
+        assert_eq!(after.len(), 4, "回退本身也要产生一条新版本");
+        let newest = after.last().unwrap();
+        assert_eq!(newest.origin, crate::history::SaveOrigin::Restore);
+        assert_eq!(newest.restored_from.as_deref(), Some(first_id.as_str()));
+    }
+
+    /// 正文文件被外部删除后，保存必须报错而不是静默重建。
+    #[tokio::test]
+    async fn write_entry_content_reports_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        let path = kb_root.join("note.md");
+        std::fs::write(&path, "# Note\n").unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+        std::fs::remove_file(&path).unwrap();
+
+        let _guard = state.write_lock.lock().await;
+        let err = write_entry_content(
+            &state,
+            "note",
+            "# Note\n",
+            crate::history::SaveOrigin::Editor,
+            None,
+        )
+        .await
+        .expect_err("missing file must be reported");
+        assert!(
+            format!("{err}").starts_with("entry-content-missing:"),
+            "got: {err}"
+        );
+    }
+
+    /// 排版预览只读；确认后写回，且第二次应用是 no-op。
+    #[tokio::test]
+    async fn format_preview_then_apply_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        let path = kb_root.join("note.md");
+        let original = "#  标题  \n\n-   item\n\n使用React框架   \n";
+        std::fs::write(&path, original).unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        let preview = preview_format_impl(&state, "note").await.unwrap();
+        assert!(preview.changed);
+        assert_eq!(preview.original, original, "预览不能改动磁盘内容");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        assert_eq!(
+            preview.formatted,
+            "# 标题\n\n- item\n\n使用 React 框架\n"
+        );
+
+        let applied = apply_format_impl(&state, "note").await.unwrap();
+        assert!(applied.changed);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), preview.formatted);
+
+        let second = apply_format_impl(&state, "note").await.unwrap();
+        assert!(!second.changed, "排版结果必须稳定（第二次无写入）");
+    }
+
+    // ---------- 同 KB 迁移（复用 rename 管线） ----------
+
+    /// 扁平条目换目录：文件名不变，新 id 由新目录派生，布局键跟随迁移。
+    #[tokio::test]
+    async fn move_entry_flat_keeps_name_and_migrates_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::create_dir_all(kb_root.join("alpha")).unwrap();
+        std::fs::create_dir_all(kb_root.join("beta")).unwrap();
+        std::fs::write(kb_root.join("alpha").join("note.md"), "# Note\n").unwrap();
+        crate::layout_store::update_position(&kb_root, "alpha-note", 10.0, 20.0).unwrap();
+
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        let result = move_entry_impl(&state, "alpha-note".to_string(), "beta".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(result.new_id, "beta-note");
+        assert!(kb_root.join("beta").join("note.md").exists());
+        assert!(!kb_root.join("alpha").join("note.md").exists());
+
+        let positions = crate::layout_store::load_positions(&kb_root);
+        assert!(positions.get("alpha-note").is_none(), "旧布局键必须消失");
+        assert_eq!(
+            positions.get("beta-note").map(|p| (p.x, p.y)),
+            Some((10.0, 20.0)),
+            "布局位置必须跟随迁移"
+        );
+
+        let idx = state.index.read().await;
+        idx.rebuild(&kb_root).unwrap();
+        let entries = idx.get_all_entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "beta-note");
+        assert_eq!(entries[0].dir.as_deref(), Some("beta"));
+    }
+
+    /// 目录条目换父目录：目录名不变，整个目录（含附件）一起移动。
+    #[tokio::test]
+    async fn move_entry_directory_moves_attachments() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::create_dir_all(kb_root.join("compliance").join("gdpr")).unwrap();
+        std::fs::create_dir_all(kb_root.join("legal")).unwrap();
+        std::fs::write(
+            kb_root.join("compliance").join("gdpr").join("content.md"),
+            "# GDPR\n",
+        )
+        .unwrap();
+        std::fs::write(
+            kb_root.join("compliance").join("gdpr").join("diagram.png"),
+            "bytes",
+        )
+        .unwrap();
+
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        let result = move_entry_impl(&state, "gdpr".to_string(), "legal".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(result.new_id, "gdpr");
+        assert!(kb_root.join("legal").join("gdpr").join("content.md").exists());
+        assert!(
+            kb_root.join("legal").join("gdpr").join("diagram.png").exists(),
+            "目录迁移必须带上附件"
+        );
+        assert!(!kb_root.join("compliance").join("gdpr").exists());
+    }
+
+    /// 迁移到路径逃逸目录必须被拒绝，且原文件保持原位。
+    #[tokio::test]
+    async fn move_entry_rejects_escaping_target_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::write(kb_root.join("note.md"), "# Note\n").unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        let err = move_entry_impl(&state, "note".to_string(), "../outside".to_string())
+            .await
+            .expect_err("escaping target dir must be rejected");
+        assert!(format!("{err}").starts_with("parent-group-invalid:"), "got: {err}");
+        assert!(kb_root.join("note.md").exists());
     }
 }

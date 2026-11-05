@@ -18,7 +18,12 @@ cleanupStaleTempDirs({ log: (dir) => console.warn(`[test] removed stale temp dir
 
 const workDir = mkdtempSync(join(tmpdir(), 'synapse-unit-'));
 const buildDir = join(workDir, 'build');
-const tsTests = ['src/events/kbRefresh.test.ts', 'src/views/layoutSync.test.ts'];
+const tsTests = [
+  'src/events/kbRefresh.test.ts',
+  'src/views/layoutSync.test.ts',
+  'src/utils/editorDraft.test.ts',
+  'src/utils/lineDiff.test.ts',
+];
 const plainTests = ['scripts/cleanup-temp.test.mjs'];
 const isWindows = process.platform === 'win32';
 const esbuildBin = join('node_modules', '.bin', isWindows ? 'esbuild.cmd' : 'esbuild');

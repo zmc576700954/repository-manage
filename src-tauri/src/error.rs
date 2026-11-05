@@ -120,6 +120,24 @@ pub enum AppError {
     /// 级联引用保持原状），因此不会出现“改名成功但坐标丢了”的半成品。
     #[error("layout-migration-failed: {reason}")]
     LayoutMigrationFailed { reason: String },
+
+    /// 历史目录迁移失败。历史目录与条目 id 绑定，迁移失败同样触发整体
+    /// 回滚，避免“文档移动了但历史还挂旧 id”的半成品。
+    #[error("history-migration-failed: {reason}")]
+    HistoryMigrationFailed { reason: String },
+
+    /// 编辑器要保存的条目在索引里有记录，但正文文件已不存在
+    /// （被外部删除/移动）。此时不能静默重建文件，必须让用户知道。
+    #[error("entry-content-missing: {id}")]
+    EntryContentMissing { id: String },
+
+    /// 版本不存在（已被裁剪，或来自另一个条目）。
+    #[error("version-not-found: {version_id}")]
+    VersionNotFound { version_id: String },
+
+    /// 该版本正文超过 2MB，只保存了摘要与哈希，无法回退到它。
+    #[error("version-content-unavailable: {version_id}")]
+    VersionContentUnavailable { version_id: String },
 }
 
 impl AppError {

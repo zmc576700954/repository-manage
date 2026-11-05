@@ -22,6 +22,9 @@
     "rename-target-file-exists": "Cannot rename: file already exists at {{path}}",
     "external-edit-detected": "External edit detected on {{path}}; please reload",
     "cascade-failed": "Cascade failed on {{failedFiles}}: {{reason}}",
-    "layout-migration-failed": "Rename rolled back: layout migration failed ({{reason}})"
+    "layout-migration-failed": "Rename rolled back: layout migration failed ({{reason}})",
+    "entry-content-missing": "The document's content file no longer exists: {{id}}",
+    "version-not-found": "That version no longer exists: {{version_id}}",
+    "version-content-unavailable": "This version is larger than 2MB, so only its summary and hash were kept and it cannot be restored: {{version_id}}"
   }
 }

@@ -98,11 +98,16 @@ pub fn scan_entry_paths(root: &Path) -> (Vec<PathBuf>, KbLayout) {
     (paths, layout)
 }
 
-/// 路径是否为迁移产物（备份 / 日志），需要从 KB 扫描中排除。
+/// 路径是否为产物（备份 / 日志 / 编辑器临时文件 / 隐藏状态目录），
+/// 需要从 KB 扫描中排除。
 fn is_artifact(path: &Path) -> bool {
     for ancestor in path.ancestors() {
         if let Some(name) = ancestor.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with(".synapse-migrate-backup-") || name == ".synapse-migrate.log" {
+            if name.starts_with(".synapse-migrate-backup-")
+                || name == ".synapse-migrate.log"
+                || name.starts_with(".synapse-tmp-")
+                || name == ".synapse"
+            {
                 return true;
             }
         }
@@ -182,6 +187,26 @@ mod tests {
         let (paths, layout) = scan_entry_paths(root);
         assert_eq!(layout, KbLayout::Flat);
         assert_eq!(paths.len(), 1);
+        assert!(paths[0].ends_with("note.md"));
+    }
+
+    /// 编辑器临时文件与未来版本历史目录都不能被当作 KB 条目：
+    /// 保存管线会在 KB 内写 `.synapse-tmp-*`，版本历史计划放在 `.synapse/`。
+    #[test]
+    fn scan_paths_ignores_editor_temps_and_hidden_state_dir() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("note.md"), "# Note\n").unwrap();
+        fs::write(root.join(".synapse-tmp-note.md-123"), "# half-written\n").unwrap();
+        fs::create_dir_all(root.join(".synapse").join("history").join("note")).unwrap();
+        fs::write(
+            root.join(".synapse").join("history").join("note").join("v1.md"),
+            "# old version\n",
+        )
+        .unwrap();
+
+        let (paths, _) = scan_entry_paths(root);
+        assert_eq!(paths.len(), 1, "只应索引 note.md");
         assert!(paths[0].ends_with("note.md"));
     }
 

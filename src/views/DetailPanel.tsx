@@ -6,14 +6,20 @@ import { usePanelStore } from '@/store/panelStore';
 import { RelationDialog } from '@/components/RelationDialog';
 import { EntryMetadataEditor } from '@/components/EntryMetadataEditor';
 import { RenameEntryDialog } from '@/components/RenameEntryDialog';
+import { VersionHistorySection } from '@/components/VersionHistorySection';
 import { MarkdownView } from '@/markdown/MarkdownView';
-import type { Entry, Relation } from '@shared/types';
+import { localizeError } from '@/i18n/translateError';
+import { clearDraft, pendingDraft, writeDraft, type EntryDraft } from '@/utils/editorDraft';
+import { changedLinePairs } from '@/utils/lineDiff';
+import type { Entry, FormatPreview, Relation } from '@shared/types';
 
 interface ExtLink {
   text: string;
   url: string;
   external: boolean;
 }
+
+const DRAFT_AUTOSAVE_MS = 30_000;
 
 function lookupTitle(entries: Entry[], id: string): string | null {
   return entries.find((e) => e.id === id)?.title ?? null;
@@ -103,6 +109,10 @@ export function DetailPanel() {
   const activeKbId = useAppStore((s) => s.activeKbId);
   const selectEntry = useAppStore((s) => s.selectEntry);
   const deleteRelation = useAppStore((s) => s.deleteRelation);
+  const saveEntryContent = useAppStore((s) => s.saveEntryContent);
+  const autosaveEntryContent = useAppStore((s) => s.autosaveEntryContent);
+  const previewFormatEntry = useAppStore((s) => s.previewFormatEntry);
+  const applyFormatEntry = useAppStore((s) => s.applyFormatEntry);
   const addInternalReference = useAppStore((s) => s.createRelation);
   const createEntryFromReference = useAppStore((s) => s.createEntryFromReference);
   const closePanel = usePanelStore((s) => s.close);
@@ -130,8 +140,33 @@ export function DetailPanel() {
   /// 一份已显示过的字符串引用。
   const loadedEntryIdRef = useRef<string | null>(null);
   const lastContentRef = useRef<string | null>(null);
-  const [viewMode, setViewMode] = useState<'rendered' | 'source'>('rendered');
+  const [viewMode, setViewMode] = useState<'rendered' | 'source' | 'edit'>('rendered');
   const [extLinks, setExtLinks] = useState<ExtLink[]>([]);
+
+  // ---------- 正文编辑器 ----------
+  /// 编辑器里的文本与 dirty 状态放在 ref 里同步维护：自动保存 interval、
+/// 切条目时的草稿落盘、外部变更判定都在异步回调里读它们，不能依赖
+/// 可能过期的闭包状态。
+  const [editorText, setEditorText] = useState('');
+  const editorTextRef = useRef('');
+  const [dirty, setDirty] = useState(false);
+  const dirtyRef = useRef(false);
+  const viewModeRef = useRef(viewMode);
+  const draftOwnerRef = useRef<{ kbId: string | null; entryId: string } | null>(null);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
+  const [pendingDraftState, setPendingDraftState] = useState<EntryDraft | null>(null);
+  const [externalText, setExternalText] = useState<string | null>(null);
+  const [externalChanged, setExternalChanged] = useState(false);
+  const [formatPreview, setFormatPreview] = useState<FormatPreview | null>(null);
+  const [formatBusy, setFormatBusy] = useState(false);
+  const [formatNotice, setFormatNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    viewModeRef.current = viewMode;
+  }, [viewMode]);
+
   const [showRelDialog, setShowRelDialog] = useState(false);
   const [showRename, setShowRename] = useState(false);
   const setInteractionBusy = useAppStore((s) => s.setInteractionBusy);
@@ -170,12 +205,37 @@ export function DetailPanel() {
   // 同时不会覆盖用户正在输入的正文/元数据，也不抢焦点（内容未变时完全
   // 不 setState）。直接比较原文比哈希更可靠，也不额外消耗计算。
   useEffect(() => {
+    const resetEditor = () => {
+      setEditorText('');
+      editorTextRef.current = '';
+      setDirty(false);
+      dirtyRef.current = false;
+      setSaveState('idle');
+      setSaveError(null);
+      setDraftSavedAt(null);
+      setPendingDraftState(null);
+      setExternalText(null);
+      setExternalChanged(false);
+      setFormatPreview(null);
+      setFormatNotice(null);
+    };
+
+    // 切换条目/关闭面板时，先把上一条目未保存的草稿落到 localStorage。
+    const prevOwner = draftOwnerRef.current;
+    if (prevOwner && dirtyRef.current) {
+      writeDraft(prevOwner.kbId, prevOwner.entryId, editorTextRef.current);
+    }
+    draftOwnerRef.current = selectedEntryId
+      ? { kbId: activeKbId, entryId: selectedEntryId }
+      : null;
+
     if (!selectedEntryId) {
       loadedEntryIdRef.current = null;
       lastContentRef.current = null;
       setContent({ markdown: null, error: null });
       setExtLinks([]);
       setViewMode('rendered');
+      resetEditor();
       return;
     }
     const sameEntry = loadedEntryIdRef.current === selectedEntryId;
@@ -187,12 +247,20 @@ export function DetailPanel() {
       setLinkMsg({});
       setViewMode('rendered');
       lastContentRef.current = null;
+      resetEditor();
     }
     invoke<string | null>('get_entry_content', { id: selectedEntryId })
       .then((text) => {
         if (cancelled) return;
         if (sameEntry && text === lastContentRef.current) {
           // 正文没变：保持当前内容（含滚动位置与渲染/源码视图）。
+          return;
+        }
+        // 用户正在编辑且有未保存修改：不能直接替换编辑器内容，只提示
+        // 外部变更，由用户决定重新加载还是保留自己的编辑。
+        if (viewModeRef.current === 'edit' && dirtyRef.current) {
+          setExternalText(text);
+          setExternalChanged(true);
           return;
         }
         lastContentRef.current = text;
@@ -202,6 +270,10 @@ export function DetailPanel() {
         } else {
           setContent({ markdown: text, error: null });
           setExtLinks(parseMarkdownLinksClient(text));
+          if (!sameEntry) {
+            // 只在首次进入该条目时询问草稿，避免列表刷新反复弹提示。
+            setPendingDraftState(pendingDraft(activeKbId, selectedEntryId, text));
+          }
         }
       })
       .catch((e) => {
@@ -212,7 +284,47 @@ export function DetailPanel() {
     return () => {
       cancelled = true;
     };
-  }, [selectedEntryId, entriesRevision, t]);
+  }, [selectedEntryId, entriesRevision, t, activeKbId]);
+
+  // 自动保存：编辑模式下每 30 秒写盘一次。
+  // - 先在 localStorage 存一份草稿（崩溃兜底，不触发 watcher）；
+  // - 再调用 autosave 命令真正落盘，版本记录由后端按“≥5 分钟”节流。
+  // - 保存期间用户继续输入时，只更新 lastContentRef，不覆盖编辑器内容。
+  useEffect(() => {
+    if (!selectedEntryId || viewMode !== 'edit') return;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      if (!dirtyRef.current) return;
+      const text = editorTextRef.current;
+      writeDraft(activeKbId, selectedEntryId, text);
+      setDraftSavedAt(Date.now());
+      void autosaveEntryContent(selectedEntryId, text)
+        .then((result) => {
+          if (cancelled) return;
+          lastContentRef.current = result.content;
+          if (editorTextRef.current === text) {
+            setContent({ markdown: result.content, error: null });
+            setExtLinks(parseMarkdownLinksClient(result.content));
+            setDirty(false);
+            dirtyRef.current = false;
+            clearDraft(activeKbId, selectedEntryId);
+            setDraftSavedAt(null);
+            setSaveState('saved');
+          }
+        })
+        .catch(() => {
+          // 落盘失败时保留 dirty 与本地草稿，下一次显式保存会重试。
+        });
+    }, DRAFT_AUTOSAVE_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      if (dirtyRef.current) {
+        writeDraft(activeKbId, selectedEntryId, editorTextRef.current);
+        setDraftSavedAt(Date.now());
+      }
+    };
+  }, [selectedEntryId, activeKbId, viewMode, autosaveEntryContent]);
 
   /// Cycle 3 polish B: when the store asks us to open the rename dialog
   /// for an id, open it. We clear the store value back to null so the
@@ -335,6 +447,134 @@ export function DetailPanel() {
     return found ? { id: found.id, title: found.title } : null;
   };
 
+  // ---------- 编辑器动作 ----------
+
+  const handleEnterEdit = () => {
+    if (content.markdown == null) return;
+    setEditorText(content.markdown);
+    editorTextRef.current = content.markdown;
+    setDirty(false);
+    dirtyRef.current = false;
+    setSaveState('idle');
+    setSaveError(null);
+    setDraftSavedAt(null);
+    setViewMode('edit');
+  };
+
+  const handleEditorChange = (value: string) => {
+    setEditorText(value);
+    editorTextRef.current = value;
+    if (!dirtyRef.current) {
+      dirtyRef.current = true;
+      setDirty(true);
+    }
+    if (saveState !== 'saving') setSaveState('idle');
+    setSaveError(null);
+  };
+
+  const applySavedContent = (text: string) => {
+    lastContentRef.current = text;
+    setContent({ markdown: text, error: null });
+    setExtLinks(parseMarkdownLinksClient(text));
+    setEditorText(text);
+    editorTextRef.current = text;
+    setDirty(false);
+    dirtyRef.current = false;
+    setDraftSavedAt(null);
+    setSaveState('saved');
+  };
+
+  const handleSave = async (): Promise<boolean> => {
+    if (!entry) return false;
+    setSaveState('saving');
+    setSaveError(null);
+    try {
+      const result = await saveEntryContent(entry.id, editorTextRef.current);
+      applySavedContent(result.content);
+      clearDraft(activeKbId, entry.id);
+      setPendingDraftState(null);
+      setExternalChanged(false);
+      setExternalText(null);
+      return true;
+    } catch (e) {
+      setSaveState('error');
+      setSaveError(t('saveError', { msg: localizeError(e) }));
+      return false;
+    }
+  };
+
+  const handlePreviewFormat = async () => {
+    if (!entry) return;
+    setFormatBusy(true);
+    setFormatNotice(null);
+    try {
+      const preview = await previewFormatEntry(entry.id);
+      if (!preview.changed) {
+        setFormatNotice(t('formatNoChanges'));
+      } else {
+        setFormatPreview(preview);
+      }
+    } catch (e) {
+      setFormatNotice(t('formatError', { msg: localizeError(e) }));
+    } finally {
+      setFormatBusy(false);
+    }
+  };
+
+  const handleApplyFormat = async () => {
+    if (!entry || !formatPreview) return;
+    setFormatBusy(true);
+    try {
+      const result = await applyFormatEntry(entry.id);
+      setFormatPreview(null);
+      applySavedContent(result.content);
+      clearDraft(activeKbId, entry.id);
+      setPendingDraftState(null);
+      setFormatNotice(t('formatApplied'));
+    } catch (e) {
+      setFormatNotice(t('formatError', { msg: localizeError(e) }));
+    } finally {
+      setFormatBusy(false);
+    }
+  };
+
+  const handleReloadExternal = () => {
+    if (!entry || externalText == null) return;
+    applySavedContent(externalText);
+    setSaveState('idle');
+    clearDraft(activeKbId, entry.id);
+    setPendingDraftState(null);
+    setExternalChanged(false);
+    setExternalText(null);
+  };
+
+  const handleKeepEdits = () => {
+    if (externalText != null) lastContentRef.current = externalText;
+    setExternalChanged(false);
+    setExternalText(null);
+  };
+
+  const handleRestoreDraft = () => {
+    if (!pendingDraftState) return;
+    setEditorText(pendingDraftState.content);
+    editorTextRef.current = pendingDraftState.content;
+    dirtyRef.current = true;
+    setDirty(true);
+    setSaveState('idle');
+    setSaveError(null);
+    setPendingDraftState(null);
+    setViewMode('edit');
+  };
+
+  const handleDiscardDraft = () => {
+    if (entry) clearDraft(activeKbId, entry.id);
+    setPendingDraftState(null);
+  };
+
+  const formatChanges = formatPreview
+    ? changedLinePairs(formatPreview.original, formatPreview.formatted)
+    : [];
+
   return (
     <>
       <div className="flex h-full flex-col">
@@ -386,35 +626,123 @@ export function DetailPanel() {
 
           {/* Markdown content */}
           <div className="border-b border-gray-200 p-4">
-            <div className="mb-2 flex items-center justify-between">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
                 {t('contentHeader')}
               </h3>
               {content.markdown != null && (
-                <div className="flex gap-1 rounded-md border border-gray-200 bg-white p-0.5 text-[11px]">
+                <div className="flex flex-wrap items-center gap-1">
+                  <div className="flex gap-1 rounded-md border border-gray-200 bg-white p-0.5 text-[11px]">
+                    <button
+                      onClick={() => setViewMode('rendered')}
+                      className={`rounded px-2 py-0.5 ${
+                        viewMode === 'rendered'
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'text-gray-500 hover:bg-gray-50'
+                      }`}
+                    >
+                      {tMd('viewToggleRender')}
+                    </button>
+                    <button
+                      onClick={() => setViewMode('source')}
+                      className={`rounded px-2 py-0.5 ${
+                        viewMode === 'source'
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'text-gray-500 hover:bg-gray-50'
+                      }`}
+                    >
+                      {tMd('viewToggleSource')}
+                    </button>
+                    <button
+                      onClick={handleEnterEdit}
+                      className={`rounded px-2 py-0.5 ${
+                        viewMode === 'edit'
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'text-gray-500 hover:bg-gray-50'
+                      }`}
+                    >
+                      {t('viewEdit')}
+                    </button>
+                  </div>
                   <button
-                    onClick={() => setViewMode('rendered')}
-                    className={`rounded px-2 py-0.5 ${
-                      viewMode === 'rendered'
-                        ? 'bg-blue-100 text-blue-700'
-                        : 'text-gray-500 hover:bg-gray-50'
-                    }`}
+                    onClick={handlePreviewFormat}
+                    disabled={formatBusy}
+                    title={t('formatHint')}
+                    className="rounded-md border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-100 disabled:opacity-50"
                   >
-                    {tMd('viewToggleRender')}
+                    {t('formatButton')}
                   </button>
-                  <button
-                    onClick={() => setViewMode('source')}
-                    className={`rounded px-2 py-0.5 ${
-                      viewMode === 'source'
-                        ? 'bg-blue-100 text-blue-700'
-                        : 'text-gray-500 hover:bg-gray-50'
-                    }`}
-                  >
-                    {tMd('viewToggleSource')}
-                  </button>
+                  {viewMode === 'edit' && (
+                    <button
+                      onClick={handleSave}
+                      disabled={saveState === 'saving'}
+                      className="rounded-md bg-blue-500 px-2 py-0.5 text-[11px] font-medium text-white hover:bg-blue-600 disabled:opacity-50"
+                    >
+                      {saveState === 'saving' ? t('saveBusy') : t('saveButton')}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
+
+            {viewMode === 'edit' && (
+              <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+                {saveState === 'error' && saveError ? (
+                  <span className="text-red-600">{saveError}</span>
+                ) : saveState === 'saved' ? (
+                  <span className="text-green-700">{t('saveDone')}</span>
+                ) : dirty ? (
+                  <span className="text-amber-600">{t('saveIdle')}</span>
+                ) : null}
+                {draftSavedAt != null && (
+                  <span className="text-gray-400">
+                    {t('draftSaved', {
+                      time: new Date(draftSavedAt).toLocaleTimeString(),
+                    })}
+                  </span>
+                )}
+                <span className="text-gray-400">{t('autoSaveHint')}</span>
+              </div>
+            )}
+
+            {pendingDraftState && (
+              <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
+                <span>{t('draftPending')}</span>
+                <button
+                  onClick={handleRestoreDraft}
+                  className="rounded border border-amber-300 bg-white px-2 py-0.5 hover:bg-amber-100"
+                >
+                  {t('draftRestore')}
+                </button>
+                <button
+                  onClick={handleDiscardDraft}
+                  className="rounded px-2 py-0.5 text-amber-700 hover:bg-amber-100"
+                >
+                  {t('draftDiscard')}
+                </button>
+              </div>
+            )}
+
+            {externalChanged && (
+              <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-700">
+                <span>{t('externalChanged')}</span>
+                <button
+                  onClick={handleReloadExternal}
+                  className="rounded border border-red-300 bg-white px-2 py-0.5 hover:bg-red-100"
+                >
+                  {t('externalReload')}
+                </button>
+                <button
+                  onClick={handleKeepEdits}
+                  className="rounded px-2 py-0.5 hover:bg-red-100"
+                >
+                  {t('externalKeep')}
+                </button>
+              </div>
+            )}
+
+            {formatNotice && <p className="mb-2 text-xs text-blue-700">{formatNotice}</p>}
+
             {content.markdown != null ? (
               viewMode === 'rendered' ? (
                 <MarkdownView
@@ -423,15 +751,43 @@ export function DetailPanel() {
                   onNavigate={handleWikilinkNavigate}
                   onCreateFromRef={handleWikilinkCreate}
                 />
-              ) : (
+              ) : viewMode === 'source' ? (
                 <pre className="max-h-[60vh] overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-gray-50 p-3 font-mono text-xs leading-relaxed text-gray-800">
                   {content.markdown}
                 </pre>
+              ) : (
+                <textarea
+                  value={editorText}
+                  onChange={(e) => handleEditorChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+                      e.preventDefault();
+                      void handleSave();
+                    }
+                  }}
+                  placeholder={t('editPlaceholder')}
+                  spellCheck={false}
+                  className="h-[60vh] w-full resize-y rounded-md border border-gray-200 bg-gray-50 p-3 font-mono text-xs leading-relaxed text-gray-800 focus:border-blue-400 focus:outline-none"
+                />
               )
             ) : (
               <p className="text-sm text-gray-400">{content.error ?? t('loadingContent')}</p>
             )}
           </div>
+
+          {/* Version history */}
+          <VersionHistorySection
+            entryId={entry.id}
+            refreshKey={entriesRevision}
+            editingDirty={dirty}
+            onRestored={(text) => {
+              applySavedContent(text);
+              clearDraft(activeKbId, entry.id);
+              setPendingDraftState(null);
+              setExternalChanged(false);
+              setExternalText(null);
+            }}
+          />
 
           {/* Outgoing relations */}
           <div className="border-b border-gray-200 p-4">
@@ -657,6 +1013,15 @@ export function DetailPanel() {
           onSubmit={handleCreateEntry}
         />
       )}
+      {formatPreview && (
+        <FormatPreviewDialog
+          changes={formatChanges}
+          changedLines={formatPreview.changedLines}
+          busy={formatBusy}
+          onCancel={() => setFormatPreview(null)}
+          onApply={handleApplyFormat}
+        />
+      )}
     </>
   );
 }
@@ -763,4 +1128,68 @@ function slugFromText(text: string): string {
     .replace(/[^a-z0-9一-龥]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 40);
+}
+
+interface FormatPreviewDialogProps {
+  changes: Array<{ lineNo: number; before: string; after: string }>;
+  changedLines: number;
+  busy: boolean;
+  onCancel: () => void;
+  onApply: () => void;
+}
+
+/// 排版预览：只展示会变化的行，确认后才写盘，避免静默改写。
+function FormatPreviewDialog({
+  changes,
+  changedLines,
+  busy,
+  onCancel,
+  onApply,
+}: FormatPreviewDialogProps) {
+  const { t } = useTranslation('DetailPanel');
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+      <div className="flex max-h-[80vh] w-full max-w-3xl flex-col rounded-lg bg-white p-6 shadow-xl">
+        <h2 className="text-lg font-semibold text-gray-900">{t('formatTitle')}</h2>
+        <p className="mt-1 text-xs text-gray-500">{t('formatHint')}</p>
+        <p className="mt-2 text-xs font-medium text-blue-700">
+          {t('formatChangedLines', { count: changedLines })}
+        </p>
+
+        <div className="mt-3 flex-1 overflow-y-auto">
+          {changes.map((change) => (
+            <div
+              key={change.lineNo}
+              className="mb-2 rounded-md border border-gray-200 p-2"
+            >
+              <div className="mb-1 text-[11px] text-gray-400">#{change.lineNo}</div>
+              <div className="min-h-[1.25rem] whitespace-pre-wrap break-words rounded bg-red-50 px-2 py-1 font-mono text-xs text-red-800">
+                {change.before}
+              </div>
+              <div className="mt-1 min-h-[1.25rem] whitespace-pre-wrap break-words rounded bg-green-50 px-2 py-1 font-mono text-xs text-green-800">
+                {change.after}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            disabled={busy}
+            className="rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+          >
+            {t('formatCancel')}
+          </button>
+          <button
+            disabled={busy}
+            onClick={onApply}
+            className="rounded-md bg-blue-500 px-3 py-2 text-sm font-medium text-white hover:bg-blue-600 disabled:opacity-50"
+          >
+            {busy ? t('saveBusy') : t('formatApply')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

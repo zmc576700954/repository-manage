@@ -22,7 +22,10 @@ use crate::index::StoredEntry;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+#[cfg(test)]
+use std::cell::RefCell;
+#[cfg(not(test))]
+use std::sync::Mutex;
 
 #[derive(Default)]
 struct Cache {
@@ -33,11 +36,28 @@ struct Cache {
     aliases: HashMap<PathBuf, PathBuf>,
 }
 
+#[cfg(not(test))]
 static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
 
-fn lock_cache() -> MutexGuard<'static, Option<Cache>> {
-    // 缓存本身没有跨线程一致性要求之外的语义；锁中毒时继续使用即可。
-    CACHE.lock().unwrap_or_else(|e| e.into_inner())
+#[cfg(test)]
+thread_local! {
+    /// 测试并行时不能共享进程级缓存：任何一个测试调用
+    /// `entries_fingerprint` 都会裁剪掉其他测试的 key，`clear_cache`
+    /// 也会把别人的缓存清空，导致断言/`unwrap` 偶发失败。
+    /// 测试下退化为线程本地缓存，各测试之间彻底隔离。
+    static TLS_CACHE: RefCell<Option<Cache>> = const { RefCell::new(None) };
+}
+
+fn with_cache<R>(f: impl FnOnce(&mut Option<Cache>) -> R) -> R {
+    #[cfg(not(test))]
+    {
+        let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        f(&mut guard)
+    }
+    #[cfg(test)]
+    {
+        TLS_CACHE.with(|cell| f(&mut cell.borrow_mut()))
+    }
 }
 
 /// 64-bit FNV-1a。比 SipHash 便宜，足够用于“内容是否变化”的判定；
@@ -72,34 +92,35 @@ pub fn entries_fingerprint(entries: &[StoredEntry]) -> String {
         .unwrap_or_default()
         .hash(&mut hasher);
 
-    let mut guard = lock_cache();
-    let cache = guard.get_or_insert_with(Cache::default);
+    with_cache(|guard| {
+        let cache = guard.get_or_insert_with(Cache::default);
 
-    // 裁剪掉已经不在条目集合里的路径（删除、改名、切 KB）。
-    let live: HashSet<&Path> = sorted
-        .iter()
-        .map(|e| Path::new(e.content_path.as_str()))
-        .collect();
-    cache.hashes.retain(|path, _| live.contains(path.as_path()));
-    cache.aliases.retain(|_, raw| live.contains(raw.as_path()));
+        // 裁剪掉已经不在条目集合里的路径（删除、改名、切 KB）。
+        let live: HashSet<&Path> = sorted
+            .iter()
+            .map(|e| Path::new(e.content_path.as_str()))
+            .collect();
+        cache.hashes.retain(|path, _| live.contains(path.as_path()));
+        cache.aliases.retain(|_, raw| live.contains(raw.as_path()));
 
-    for entry in &sorted {
-        let raw = PathBuf::from(&entry.content_path);
-        let hash = match cache.hashes.get(&raw) {
-            Some(hit) => *hit,
-            None => {
-                let computed = file_hash(&raw);
-                cache.hashes.insert(raw.clone(), computed);
-                if raw != normalize(&raw) {
-                    cache.aliases.insert(normalize(&raw), raw.clone());
+        for entry in &sorted {
+            let raw = PathBuf::from(&entry.content_path);
+            let hash = match cache.hashes.get(&raw) {
+                Some(hit) => *hit,
+                None => {
+                    let computed = file_hash(&raw);
+                    cache.hashes.insert(raw.clone(), computed);
+                    if raw != normalize(&raw) {
+                        cache.aliases.insert(normalize(&raw), raw.clone());
+                    }
+                    computed
                 }
-                computed
-            }
-        };
-        (entry.id.as_str(), hash).hash(&mut hasher);
-    }
+            };
+            (entry.id.as_str(), hash).hash(&mut hasher);
+        }
 
-    format!("{:016x}", hasher.finish())
+        format!("{:016x}", hasher.finish())
+    })
 }
 
 /// 无缓存的参考实现：每次都把全部正文重读一遍。
@@ -122,26 +143,26 @@ pub fn entries_fingerprint_uncached(entries: &[StoredEntry]) -> String {
 
 /// 使这些路径对应的缓存失效；下一次算指纹时会重读它们。
 pub fn invalidate_paths(paths: &[PathBuf]) {
-    let mut guard = lock_cache();
-    let Some(cache) = guard.as_mut() else {
-        return;
-    };
-    for path in paths {
-        cache.hashes.remove(path);
-        let normalized = normalize(path);
-        if let Some(raw) = cache.aliases.remove(&normalized) {
-            cache.hashes.remove(&raw);
+    with_cache(|guard| {
+        let Some(cache) = guard.as_mut() else {
+            return;
+        };
+        for path in paths {
+            cache.hashes.remove(path);
+            let normalized = normalize(path);
+            if let Some(raw) = cache.aliases.remove(&normalized) {
+                cache.hashes.remove(&raw);
+            }
+            if normalized != *path {
+                cache.hashes.remove(&normalized);
+            }
         }
-        if normalized != *path {
-            cache.hashes.remove(&normalized);
-        }
-    }
+    });
 }
 
 /// 清空缓存。测试与基准用，生产不需要。
 pub fn clear_cache() {
-    let mut guard = lock_cache();
-    *guard = None;
+    with_cache(|guard| *guard = None);
 }
 
 #[cfg(test)]
@@ -328,17 +349,11 @@ mod tests {
         let ea = entry("a", &a);
         let eb = entry("b", &b);
         entries_fingerprint(&[ea.clone(), eb.clone()]);
-        let cache_len = {
-            let guard = lock_cache();
-            guard.as_ref().unwrap().hashes.len()
-        };
+        let cache_len = with_cache(|guard| guard.as_ref().unwrap().hashes.len());
         assert_eq!(cache_len, 2);
 
         entries_fingerprint(std::slice::from_ref(&ea));
-        let cache_len = {
-            let guard = lock_cache();
-            guard.as_ref().unwrap().hashes.len()
-        };
+        let cache_len = with_cache(|guard| guard.as_ref().unwrap().hashes.len());
         assert_eq!(cache_len, 1, "removed entries must be pruned");
         clear_cache();
     }

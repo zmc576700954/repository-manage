@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import type { Entry, KBInfo, MetadataChanges, PrecheckRenameResult, RelationType, RenameResult, StoredEntry } from '@shared/types';
+import type { Entry, FormatPreview, HistoryWarnings, KBInfo, MetadataChanges, PrecheckRenameResult, RelationType, RenameResult, SaveEntryResult, StoredEntry, TrimOutcome, TrimPreview, VersionMeta } from '@shared/types';
 import { localizeError } from '@/i18n/translateError';
 import { usePanelStore } from './panelStore';
 import { setSyncedFingerprint, type KbChangedPayload } from '@/events/kbRefresh';
@@ -82,6 +82,27 @@ interface AppState {
   updateMetadata: (id: string, changes: MetadataChanges) => Promise<StoredEntry>;
   precheckRename: (id: string, newName: string, newGroup: string) => Promise<PrecheckRenameResult>;
   renameEntry: (id: string, newName: string, newGroup: string, cascade: boolean) => Promise<RenameResult>;
+
+  // ---------- 正文编辑 / 无损排版 / 同 KB 迁移 ----------
+  /// 显式保存正文。成功后静默重取快照，让前端指纹与后端一致（避免把
+  /// 自己这次写入当成外部变更）。错误向上抛，由编辑器就地展示。
+  saveEntryContent: (id: string, content: string) => Promise<SaveEntryResult>;
+  /// 自动保存：写盘，版本按 5 分钟节流。
+  autosaveEntryContent: (id: string, content: string) => Promise<SaveEntryResult>;
+  /// 只读预览排版差异，不写盘。
+  previewFormatEntry: (id: string) => Promise<FormatPreview>;
+  /// 用户确认后写回排版结果。
+  applyFormatEntry: (id: string) => Promise<SaveEntryResult>;
+  /// 同一 KB 内移动文档到目标目录（复用 rename 的迁移管线）。
+  moveEntry: (id: string, targetDir: string) => Promise<RenameResult>;
+
+  // ---------- 版本历史 ----------
+  listEntryVersions: (id: string) => Promise<VersionMeta[]>;
+  getEntryVersionContent: (id: string, versionId: string) => Promise<string | null>;
+  getHistoryWarnings: (id: string) => Promise<HistoryWarnings>;
+  previewTrimHistory: (id: string, keepVersionId: string) => Promise<TrimPreview>;
+  trimHistory: (id: string, keepVersionId: string) => Promise<TrimOutcome>;
+  restoreEntryVersion: (id: string, versionId: string) => Promise<SaveEntryResult>;
 }
 
 /// Read an invoke error and turn it into a user-facing, localized message.
@@ -404,6 +425,61 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (get().selectedEntryId === id) {
       set({ selectedEntryId: result.newId });
     }
+    return result;
+  },
+
+  // ---------- 正文编辑 / 无损排版 / 同 KB 迁移 ----------
+
+  saveEntryContent: async (id, content) => {
+    const result = await invoke<SaveEntryResult>('save_entry_content', { id, content });
+    await get().refreshEntriesQuiet();
+    return result;
+  },
+
+  autosaveEntryContent: async (id, content) => {
+    const result = await invoke<SaveEntryResult>('autosave_entry_content', { id, content });
+    await get().refreshEntriesQuiet();
+    return result;
+  },
+
+  previewFormatEntry: async (id) => {
+    return invoke<FormatPreview>('preview_format_entry', { id });
+  },
+
+  applyFormatEntry: async (id) => {
+    const result = await invoke<SaveEntryResult>('apply_format_entry', { id });
+    await get().refreshEntriesQuiet();
+    return result;
+  },
+
+  moveEntry: async (id, targetDir) => {
+    const result = await invoke<RenameResult>('move_entry', { id, targetDir });
+    await get().loadEntries();
+    if (get().selectedEntryId === id) {
+      set({ selectedEntryId: result.newId });
+    }
+    return result;
+  },
+
+  listEntryVersions: (id) => invoke<VersionMeta[]>('list_entry_versions', { id }),
+
+  getEntryVersionContent: (id, versionId) =>
+    invoke<string | null>('get_entry_version_content', { id, versionId }),
+
+  getHistoryWarnings: (id) => invoke<HistoryWarnings>('get_history_warnings', { id }),
+
+  previewTrimHistory: (id, keepVersionId) =>
+    invoke<TrimPreview>('preview_trim_entry_history', { id, keepVersionId }),
+
+  trimHistory: async (id, keepVersionId) => {
+    const result = await invoke<TrimOutcome>('trim_entry_history', { id, keepVersionId });
+    await get().loadEntries();
+    return result;
+  },
+
+  restoreEntryVersion: async (id, versionId) => {
+    const result = await invoke<SaveEntryResult>('restore_entry_version', { id, versionId });
+    await get().refreshEntriesQuiet();
     return result;
   },
 

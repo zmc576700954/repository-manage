@@ -1,7 +1,10 @@
+pub mod content_io;
 pub mod entry;
 pub mod error;
 pub mod fingerprint;
+pub mod formatter;
 pub mod fs;
+pub mod history;
 pub mod index;
 pub mod kb_registry;
 pub mod layout_store;
@@ -265,6 +268,17 @@ pub fn run() {
             commands::get_layout,
             commands::save_node_position,
             commands::get_entry_content,
+            commands::save_entry_content,
+            commands::autosave_entry_content,
+            commands::preview_format_entry,
+            commands::apply_format_entry,
+            commands::move_entry,
+            commands::list_entry_versions,
+            commands::get_entry_version_content,
+            commands::get_history_warnings,
+            commands::preview_trim_entry_history,
+            commands::trim_entry_history,
+            commands::restore_entry_version,
             commands::create_entry_from_reference,
             commands::validate_kb,
             commands::validate_entry,
@@ -281,6 +295,24 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// `.synapse/`（版本历史等内部状态）与编辑器临时文件不属于 KB 内容。
+/// watcher 必须把它们挡在重建入口之外：否则写一条版本就会触发新的
+/// `kb-changed`，并可能被当成外部修改再写一条版本，形成刷新回环。
+fn is_synapse_state_path(path: &std::path::Path) -> bool {
+    if path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.starts_with(".synapse-tmp-"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    path.components().any(|c| match c {
+        std::path::Component::Normal(name) => name == std::ffi::OsStr::new(".synapse"),
+        _ => false,
+    })
 }
 
 /// Construct a `notify-debouncer-mini` watcher rooted at `root` whose callback
@@ -302,7 +334,19 @@ pub(crate) fn create_watcher(
             // 本进程成功写入过”来做，而不是靠粗粒度的“最近有没有写过”。
             // 读取失败（notify 错误）也触发重建，路径为空 → 按 external 处理。
             let paths = match result {
-                Ok(events) => events.into_iter().map(|event| event.path).collect(),
+                Ok(events) => {
+                    let paths: Vec<_> = events
+                        .into_iter()
+                        .map(|event| event.path)
+                        .filter(|path| !is_synapse_state_path(path))
+                        .collect();
+                    // 整批都发生在 `.synapse/` 内部：这不是 KB 内容变化，
+                    // 直接丢弃，避免版本写入触发无意义重建/回环。
+                    if paths.is_empty() {
+                        return;
+                    }
+                    paths
+                }
                 Err(e) => {
                     eprintln!("[watcher] debounce error: {e}");
                     Vec::new()
@@ -425,6 +469,39 @@ fn run_watch_loop(rx: std::sync::mpsc::Receiver<Vec<std::path::PathBuf>>, state:
                             RebuildOrigin::External
                         };
 
+                        // 外部修改也留痕（产品口径）：只对事件路径命中的条目
+                        // 读取当前正文，按内容哈希去重后追加 `origin=external`。
+                        // 本地写已在保存管线里记录，这里跳过。
+                        if origin == RebuildOrigin::External {
+                            for entry in &after {
+                                // watcher 给出的路径是内核解析后的真实路径
+                                // （macOS 上 `/tmp` 会变成 `/private/tmp`），
+                                // 索引里存的是 KB 原始路径，必须按同一规则归一
+                                // 后再比较，否则 /tmp 下的 KB 永远匹配不上。
+                                let content_path = crate::state::normalize_watch_path(
+                                    std::path::Path::new(&entry.content_path),
+                                );
+                                let touched = paths.iter().any(|p| {
+                                    let event = crate::state::normalize_watch_path(p);
+                                    content_path == event || content_path.starts_with(&event)
+                                });
+                                if !touched {
+                                    continue;
+                                }
+                                let Ok(text) = std::fs::read_to_string(content_path) else {
+                                    continue;
+                                };
+                                if let Err(e) = crate::history::record_external_change(
+                                    &kb_path, &entry.id, &text,
+                                ) {
+                                    eprintln!(
+                                        "[history] record external change for {} failed: {e}",
+                                        entry.id
+                                    );
+                                }
+                            }
+                        }
+
                         let kb_id = {
                             let cur = state.current_kb.read().await;
                             cur.as_ref().map(|kb| kb.id.clone())
@@ -505,9 +582,23 @@ async fn run_startup_rebuild(state: &AppState) {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc;
     use std::time::Duration;
     use tempfile::tempdir;
+
+    /// 同 commands.rs 测试里的 `unique_test_suffix`：时间戳精度不足以保证
+    /// 并行测试的临时 DB / registry 唯一，追加进程内自增序号。
+    static TEST_TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn unique_test_suffix() -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let seq = TEST_TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        format!("{nanos}-{seq}")
+    }
 
     /// `notify-debouncer-mini` fires once per debounced batch — even a flurry
     /// of changes collapses into a single event after the configured quiet
@@ -593,19 +684,13 @@ mod tests {
 
         let db_path = std::env::temp_dir().join(format!(
             "synapse-kb-test-{}.db",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
+            unique_test_suffix()
         ));
         let index = Index::open(&db_path).expect("open test index");
 
         let registry_file = std::env::temp_dir().join(format!(
             "synapse-kb-test-kbs-{}.json",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
+            unique_test_suffix()
         ));
         let registry = KbRegistry::empty_at(registry_file);
 

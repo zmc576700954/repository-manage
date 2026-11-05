@@ -26,6 +26,62 @@ export interface Attachment {
   attachmentType: 'image' | 'document' | 'other';
 }
 
+export interface SaveEntryResult {
+  changed: boolean;
+  bytes: number;
+  savedAtMs: number;
+  content: string;
+}
+
+export interface FormatPreview {
+  original: string;
+  formatted: string;
+  changed: boolean;
+  changedLines: number;
+}
+
+export type VersionOrigin = 'editor' | 'autosave' | 'format' | 'restore' | 'external' | 'trim';
+
+export interface VersionSummary {
+  addedLines: number;
+  removedLines: number;
+}
+
+export interface VersionMeta {
+  versionId: string;
+  entryId: string;
+  createdAtMs: number;
+  author: string;
+  origin: VersionOrigin;
+  summary: VersionSummary;
+  contentHash: string;
+  contentStored: boolean;
+  contentSize: number;
+  restoredFrom?: string;
+  note?: string;
+}
+
+export interface HistoryWarnings {
+  versionCount: number;
+  perEntryLimit: number;
+  perEntryExceeded: boolean;
+  totalBytes: number;
+  totalLimitBytes: number;
+  totalExceeded: boolean;
+}
+
+export interface TrimPreview {
+  keepVersionId: string;
+  deleteCount: number;
+  bytesToFree: number;
+  keptCount: number;
+}
+
+export interface TrimOutcome {
+  deletedCount: number;
+  bytesFreed: number;
+}
+
 export interface Entry {
   id: string;
   title: string;
