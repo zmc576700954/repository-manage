@@ -118,14 +118,16 @@ export async function rankEntries(
   type Candidate = { entry: Entry; inMemoryScore: number };
   const candidates: Candidate[] = [];
   for (const e of entries) {
-    const blob = [e.title, e.group ?? '', ...(e.tags ?? []), ...(e.labels ?? [])]
+    // 搜索需要覆盖物理路径（`dir`）与展示分组（`group`）——解耦后
+    // group 只有顶层目录，嵌套目录名只能从 dir 里匹配到。
+    const blob = [e.title, e.group ?? '', e.dir ?? '', ...(e.tags ?? []), ...(e.labels ?? [])]
       .filter(Boolean)
       .join('\n');
     if (!allKeywordsPresent(blob, kws)) continue;
     const title = fieldScore(e.title, kws);
     const tags = fieldScore((e.tags ?? []).join(' '), kws);
     const labels = fieldScore((e.labels ?? []).join(' '), kws);
-    const group = fieldScore(e.group, kws);
+    const group = fieldScore(`${e.group ?? ''} ${e.dir ?? ''}`, kws);
     const inMemoryScore =
       title * FIELD_WEIGHTS.title +
       tags * FIELD_WEIGHTS.tags +

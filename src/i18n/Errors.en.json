@@ -21,6 +21,7 @@
     "rename-conflict": "Cannot rename: an entry with id '{{newId}}' already exists",
     "rename-target-file-exists": "Cannot rename: file already exists at {{path}}",
     "external-edit-detected": "External edit detected on {{path}}; please reload",
-    "cascade-failed": "Cascade failed on {{failedFiles}}: {{reason}}"
+    "cascade-failed": "Cascade failed on {{failedFiles}}: {{reason}}",
+    "layout-migration-failed": "Rename rolled back: layout migration failed ({{reason}})"
   }
 }

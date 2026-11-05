@@ -1,10 +1,17 @@
-#![allow(dead_code)]
+// 布局持久化模块：get_layout / save_node_position 命令已接线。
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex;
 
 const LAYOUT_FILENAME: &str = ".synapse-layout.json";
+
+/// `.synapse-layout.json` 的读-改-写是“读整文件 → 改一个 key → 写回整文件”，
+/// 两个并发写会互相覆盖（后写者基于旧快照）。Tauri 命令层有 `write_lock`，
+/// 但 `update_position` / `rename_key` 也可能被别处直接调用，所以模块内部
+/// 再加一把进程级同步锁，保证单次更新原子。
+static LAYOUT_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodePosition {
@@ -41,15 +48,25 @@ pub fn load_layout(kb_root: &Path) -> Layout {
 }
 
 /// 保存布局到 kb 根目录的 .synapse-layout.json。
+/// 先写临时文件再原子 rename，避免并发的 `load_layout` 读到写了一半的 JSON
+/// （解析失败会回退成空布局，导致图谱位置瞬间回弹）。
 pub fn save_layout(kb_root: &Path, layout: &Layout) -> std::io::Result<()> {
     let layout_path = kb_root.join(LAYOUT_FILENAME);
     let json = serde_json::to_string_pretty(layout)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    std::fs::write(layout_path, json)
+    let tmp_path = kb_root.join(format!("{LAYOUT_FILENAME}.tmp"));
+    std::fs::write(&tmp_path, json)?;
+    std::fs::rename(&tmp_path, layout_path)
+}
+
+/// 读取布局的节点位置表——`get_layout` 命令的唯一逻辑，便于单测。
+pub fn load_positions(kb_root: &Path) -> HashMap<String, NodePosition> {
+    load_layout(kb_root).positions
 }
 
 /// 更新单个节点的位置并保存。
 pub fn update_position(kb_root: &Path, entry_id: &str, x: f64, y: f64) -> std::io::Result<()> {
+    let _guard = LAYOUT_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut layout = load_layout(kb_root);
     layout.set(entry_id, x, y);
     save_layout(kb_root, &layout)
@@ -60,6 +77,7 @@ pub fn update_position(kb_root: &Path, entry_id: &str, x: f64, y: f64) -> std::i
 /// 如果旧 id 没有位置记录，这是一个静默的 no-op（新 id 也缺席）。
 /// 如果新 id 已经有位置，则保留现有的位置——不会覆盖现有的布局项。
 pub fn rename_key(kb_root: &Path, old_id: &str, new_id: &str) -> std::io::Result<()> {
+    let _guard = LAYOUT_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut layout = load_layout(kb_root);
     if let Some(pos) = layout.positions.remove(old_id) {
         // 仅在新 id 不存在时设置（不覆盖）。
@@ -173,5 +191,64 @@ mod tests {
         let pos = layout.get("src").unwrap();
         assert_eq!(pos.x, 1.0, "existing position must be preserved");
         assert!(layout.get("old-id").is_none());
+    }
+
+    /// 命令层闭环：get_layout（`load_positions`）读空 → 拖拽（`update_position`）
+    /// 落库 → 再次 get_layout 读到新位置 → rename 迁移 key 后再读。
+    #[test]
+    fn load_drag_rename_round_trip_through_public_api() {
+        let dir = tempdir().unwrap();
+        let kb_root = dir.path();
+
+        assert!(load_positions(kb_root).is_empty(), "fresh KB has no saved layout");
+
+        update_position(kb_root, "react-hooks", 120.0, 80.0).unwrap();
+        let after_drag = load_positions(kb_root);
+        assert_eq!(after_drag.get("react-hooks").unwrap().x, 120.0);
+        assert_eq!(after_drag.get("react-hooks").unwrap().y, 80.0);
+
+        rename_key(kb_root, "react-hooks", "react-hooks-advanced").unwrap();
+        let after_rename = load_positions(kb_root);
+        let moved = after_rename
+            .get("react-hooks-advanced")
+            .expect("position must follow the renamed entry");
+        assert_eq!(moved.x, 120.0);
+        assert_eq!(moved.y, 80.0);
+        assert!(after_rename.get("react-hooks").is_none());
+    }
+
+    /// 并发保存两个（或多个）节点位置时，任何一个写入都不能被另一个的
+    /// 旧快照覆盖。`update_position` 是“读整文件 → 改 key → 写回”，
+    /// 没有内部串行化时这里几乎必然丢位置。
+    #[test]
+    fn concurrent_updates_do_not_lose_positions() {
+        let dir = tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+
+        let mut handles = vec![];
+        for t in 0..8u32 {
+            let root = kb_root.clone();
+            handles.push(std::thread::spawn(move || {
+                for i in 0..8u32 {
+                    let id = format!("entry-{t}-{i}");
+                    update_position(&root, &id, (t * 10 + i) as f64, (t * 100 + i) as f64)
+                        .expect("update_position must succeed");
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("thread must not panic");
+        }
+
+        let positions = load_positions(&kb_root);
+        assert_eq!(positions.len(), 64, "every concurrent write must survive");
+        for t in 0..8u32 {
+            for i in 0..8u32 {
+                let id = format!("entry-{t}-{i}");
+                let pos = positions.get(&id).expect("position must exist");
+                assert_eq!(pos.x, (t * 10 + i) as f64);
+                assert_eq!(pos.y, (t * 100 + i) as f64);
+            }
+        }
     }
 }

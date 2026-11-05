@@ -42,12 +42,12 @@ export function EntryDialog({
   // 默认 parent group：
   // - ungrouped: 根（可选 ROOT_OPTION）
   // - in_group: 锁定为指定 group
-  // - as_child_of: 锁定为 parent.group（或 ROOT_OPTION）
-  // - as_parent_of: 锁定为 child.group（或 ROOT_OPTION）
+  // - as_child_of: 锁定为 parent 的物理目录 `dir`（或 ROOT_OPTION）
+  // - as_parent_of: 锁定为 child 的物理目录 `dir`（或 ROOT_OPTION）
   const defaultGroup = (() => {
     if (mode.kind === 'in_group') return mode.parentGroup;
-    if (mode.kind === 'as_child_of') return mode.parent.group ?? '';
-    if (mode.kind === 'as_parent_of') return mode.child.group ?? '';
+    if (mode.kind === 'as_child_of') return mode.parent.dir ?? '';
+    if (mode.kind === 'as_parent_of') return mode.child.dir ?? '';
     return existingGroups[0] ?? '';
   })();
   const isGroupLocked = mode.kind !== 'ungrouped';

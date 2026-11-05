@@ -151,9 +151,11 @@ export function DetailPanel() {
     [kbs, activeKbId]
   );
   const kbRoot = activeKb?.path ?? '';
+  // 新建/重命名用的候选目录必须是物理路径 `dir`；`group` 只做展示，
+  // 用它拼路径会把嵌套条目压平。
   const existingGroups = useMemo(() => {
     const set = new Set<string>();
-    for (const e of entries) if (e.group) set.add(e.group);
+    for (const e of entries) if (e.dir) set.add(e.dir);
     return Array.from(set).sort();
   }, [entries]);
 
@@ -636,7 +638,7 @@ export function DetailPanel() {
         <RenameEntryDialog
           entryId={entry.id}
           initialName={entry.id.split('-').pop() ?? entry.id}
-          initialGroup={entry.group ?? ''}
+          initialGroup={entry.dir ?? ''}
           existingGroups={existingGroups}
           onClose={() => setShowRename(false)}
           onSuccess={(newId) => {

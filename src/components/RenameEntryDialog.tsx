@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { localizeError } from '@/i18n/translateError';
 import { useAppStore } from '@/store/useAppStore';
 import type { PrecheckRenameResult } from '@shared/types';
 
@@ -65,7 +67,7 @@ export function RenameEntryDialog({
         }
       } catch (e) {
         if (myId !== requestIdRef.current) return;
-        setPrecheck({ kind: 'error', message: (e as Error).message });
+        setPrecheck({ kind: 'error', message: localizeError(e) });
       }
     }, 200);
     return () => {
@@ -83,7 +85,9 @@ export function RenameEntryDialog({
       const r = await renameEntry(entryId, newName.trim(), newGroup.trim(), cascade);
       onSuccess(r.newId);
     } catch (e) {
-      setPrecheck({ kind: 'error', message: (e as Error).message });
+      // 后端错误是 `{ code, ...params }` 结构，直接读 `.message` 会得到
+      // undefined（界面上只剩一个警告图标）。必须走 i18n 映射。
+      setPrecheck({ kind: 'error', message: localizeError(e) });
       setSubmitting(false);
     }
   };

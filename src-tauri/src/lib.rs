@@ -262,6 +262,8 @@ pub fn run() {
             commands::get_active_kb,
             commands::rebuild_active_kb,
             commands::active_kb_entry_count,
+            commands::get_layout,
+            commands::save_node_position,
             commands::get_entry_content,
             commands::create_entry_from_reference,
             commands::validate_kb,

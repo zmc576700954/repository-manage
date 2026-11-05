@@ -115,6 +115,11 @@ pub enum AppError {
     /// Cascade find/replace failed mid-way; rollback already attempted.
     #[error("cascade-failed: {failed_files:?} ({reason})")]
     CascadeFailed { failed_files: Vec<String>, reason: String },
+
+    /// `.synapse-layout.json` 的键迁移失败。重命名会整体回滚（文件、索引、
+    /// 级联引用保持原状），因此不会出现“改名成功但坐标丢了”的半成品。
+    #[error("layout-migration-failed: {reason}")]
+    LayoutMigrationFailed { reason: String },
 }
 
 impl AppError {

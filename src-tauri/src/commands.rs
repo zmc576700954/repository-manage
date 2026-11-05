@@ -218,6 +218,32 @@ pub async fn active_kb_entry_count(state: State<'_, AppState>) -> AppResult<usiz
     Ok(idx.entry_count()?)
 }
 
+/// 读取当前 KB 的节点布局（`.synapse-layout.json`）。
+#[tauri::command]
+pub async fn get_layout(
+    state: State<'_, AppState>,
+) -> AppResult<std::collections::HashMap<String, crate::layout_store::NodePosition>> {
+    let kb_root = kb_root_or_err(&state).await?;
+    Ok(crate::layout_store::load_positions(&kb_root))
+}
+
+/// 保存单个节点的位置；由前端在拖拽结束时调用。
+/// 与其它写命令一样持有 `write_lock`，串行化 `.synapse-layout.json` 的
+/// 读-改-写（`layout_store::update_position` 内部也有一把同步锁，保证
+/// 即便绕过该命令并发调用也不会互相覆盖）。
+#[tauri::command]
+pub async fn save_node_position(
+    state: State<'_, AppState>,
+    entry_id: String,
+    x: f64,
+    y: f64,
+) -> AppResult<()> {
+    let kb_root = kb_root_or_err(&state).await?;
+    let _guard = state.write_lock.lock().await;
+    crate::layout_store::update_position(&kb_root, &entry_id, x, y)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn get_entry_content(
     state: State<'_, AppState>,
@@ -1147,10 +1173,19 @@ pub async fn precheck_rename_impl(
     let _guard = state.write_lock.lock().await; // serialize with concurrent renames
     let kb_root = kb_root_or_err(state).await?;
 
+    // 目录格式的 entry id 就是目录名（或 @synapse-id），与扁平格式的
+    // `group-name` 规则不同，因此先解析旧路径判断形态。
+    let old_is_dir = {
+        let idx = state.index.read().await;
+        idx.get_entry_path(&id)?.map(|p| p.is_dir()).unwrap_or(false)
+    };
+
     // Compute new path / new id using the SAME scheme as
     // `entry::read_md_file` (path with `.md` stripped, separators
     // replaced with `-`).
-    let new_id = if new_group.is_empty() {
+    let new_id = if old_is_dir {
+        new_name.clone()
+    } else if new_group.is_empty() {
         new_name.clone()
     } else {
         format!("{new_group}-{new_name}").replace(['\\', '/'], "-")
@@ -1221,24 +1256,45 @@ pub async fn execute_rename_impl(
     let _guard = state.write_lock.lock().await;
     let kb_root = kb_root_or_err(state).await?;
 
-    // 1) Compute new path / new id (same scheme as precheck).
-    let new_path = if new_group.is_empty() {
-        kb_root.join(format!("{new_name}.md"))
-    } else {
-        kb_root.join(&new_group).join(format!("{new_name}.md"))
-    };
-    let new_id = if new_group.is_empty() {
-        new_name.clone()
-    } else {
-        format!("{new_group}-{new_name}").replace(['\\', '/'], "-")
-    };
+    // R8: 与新建条目同一套校验——新名必须能作为单个文件名组件，
+    // 新目录必须是 KB 根下的安全相对子路径。否则 `new_path` / `new_id`
+    // 可能被 `..`、绝对路径或分隔符带出 KB 根。
+    validate_filename(&new_name)?;
+    if new_name.ends_with(".md") {
+        return Err(AppError::NameHasMdSuffix);
+    }
+    validate_parent_group(&new_group)?;
 
-    // 2) Resolve old path.
+    // 1) Resolve old path first — 目录格式与扁平格式的新路径/新 id 规则不同。
     let old_path = {
         let idx = state.index.read().await;
         idx.get_entry_path(&id)?
             .ok_or_else(|| AppError::EntryNotFound { id: id.clone() })?
     };
+    let old_is_dir = old_path.is_dir();
+
+    // 2) Compute new path / new id.
+    let (new_path, new_id) = if old_is_dir {
+        let path = if new_group.is_empty() {
+            kb_root.join(&new_name)
+        } else {
+            kb_root.join(&new_group).join(&new_name)
+        };
+        (path, new_name.clone())
+    } else {
+        let path = if new_group.is_empty() {
+            kb_root.join(format!("{new_name}.md"))
+        } else {
+            kb_root.join(&new_group).join(format!("{new_name}.md"))
+        };
+        let new_id = if new_group.is_empty() {
+            new_name.clone()
+        } else {
+            format!("{new_group}-{new_name}").replace(['\\', '/'], "-")
+        };
+        (path, new_id)
+    };
+
     if new_path == old_path {
         // No-op rename (same path). Just rebuild to be safe.
         let idx = state.index.read().await;
@@ -1270,7 +1326,7 @@ pub async fn execute_rename_impl(
         let needle = format!("[[{id}]]");
         let replacement = format!("[[{new_id}]]");
         for file in find_md_files(&kb_root) {
-            if file == old_path {
+            if file == old_path || (old_is_dir && file.starts_with(&old_path)) {
                 continue;
             }
             let content = match std::fs::read_to_string(&file) {
@@ -1315,7 +1371,12 @@ pub async fn execute_rename_impl(
     // 6) Update @synapse-id in the moved file via a targeted regex
     //    replace (no validation needed — the id is path-derived and
     //    we just computed it).
-    if let Err(e) = update_synapse_id_in_file(&new_path, &id, &new_id) {
+    let id_file = if old_is_dir {
+        new_path.join("content.md")
+    } else {
+        new_path.clone()
+    };
+    if let Err(e) = update_synapse_id_in_file(&id_file, &id, &new_id) {
         // Rollback file move
         let _ = std::fs::rename(&new_path, &old_path);
         for (path, original) in &pre_cascade_cache {
@@ -1332,7 +1393,7 @@ pub async fn execute_rename_impl(
         let idx = state.index.read().await;
         if let Err(e) = idx.rename_entry_id(&id, &new_id) {
             // Rollback
-            let _ = update_synapse_id_in_file(&new_path, &new_id, &id);
+            let _ = update_synapse_id_in_file(&id_file, &new_id, &id);
             let _ = std::fs::rename(&new_path, &old_path);
             for (path, original) in &pre_cascade_cache {
                 let _ = std::fs::write(path, original);
@@ -1342,15 +1403,75 @@ pub async fn execute_rename_impl(
     }
 
     // 8) Transfer layout position (old id → new id).
+    //
+    // 布局迁移失败不能只是打日志：否则重命名成功、坐标却静默丢失，节点
+    // 会在前端被当作新节点重新布局。这里选择整体回滚——把 DB 行、`@synapse-id`、
+    // 文件移动和级联引用全部恢复，保证“要么改名+布局一起成功，要么完全没变”。
     if let Err(e) = crate::layout_store::rename_key(&kb_root, &id, &new_id) {
-        // Layout failure is non-fatal — the rename is already done.
-        eprintln!("[execute_rename] layout rename_key failed: {e}");
+        let mut rollback_errors: Vec<String> = Vec::new();
+        {
+            let idx = state.index.read().await;
+            if let Err(re) = idx.rename_entry_id(&new_id, &id) {
+                rollback_errors.push(format!("rename_entry_id: {re}"));
+            }
+        }
+        if let Err(re) = update_synapse_id_in_file(&id_file, &new_id, &id) {
+            rollback_errors.push(format!("restore @synapse-id: {re}"));
+        }
+        if let Err(re) = std::fs::rename(&new_path, &old_path) {
+            rollback_errors.push(format!(
+                "move {} back to {}: {re}",
+                new_path.display(),
+                old_path.display()
+            ));
+        }
+        for (path, original) in &pre_cascade_cache {
+            if let Err(re) = std::fs::write(path, original) {
+                rollback_errors.push(format!("restore cascade {}: {re}", path.display()));
+            }
+        }
+        // 让索引与磁盘重新一致（旧路径重新出现）。
+        {
+            let idx = state.index.read().await;
+            let _ = idx.rebuild(&kb_root);
+        }
+        let reason = if rollback_errors.is_empty() {
+            e.to_string()
+        } else {
+            format!(
+                "{e}; rollback incomplete: {}",
+                rollback_errors.join("; ")
+            )
+        };
+        return Err(AppError::LayoutMigrationFailed { reason });
     }
 
     // 9) Rebuild the index to refresh derived data (path, group, etc).
     {
         let idx = state.index.read().await;
         let _ = idx.rebuild(&kb_root);
+    }
+
+    // 10) 记录 old id → new id。watcher 之后重建时前后快照都已是新 id，
+    //     `added`/`removed` 为空；这条增量让 `kb-changed` 仍能表达重命名。
+    state.record_rename(&id, &new_id);
+
+    // 11) 登记本次成功写过的所有路径（旧文件、新文件、@synapse-id 文件、
+    //     级联更新的引用文件）。watcher 的事件路径全部命中时才会把这次
+    //     重建标为 `local-write`；失败回滚的分支不会走到这里。
+    if old_is_dir {
+        // 目录重命名会移动整棵子树；watcher 事件里是子文件路径，必须逐一
+        // 登记，否则整批会被判成 `external`，导致前端多刷一次。
+        state.note_local_write_tree(&old_path, &new_path);
+    } else {
+        state.note_local_write(&old_path);
+        state.note_local_write(&new_path);
+    }
+    if id_file != new_path {
+        state.note_local_write(&id_file);
+    }
+    for rel in &updated_files {
+        state.note_local_write(kb_root.join(rel));
     }
 
     Ok(RenameResult { new_id, updated_files })
@@ -2182,6 +2303,112 @@ End of note.
         assert!(!kb_root.join("target.md").exists(), "old file must be removed");
     }
 
+    /// 重命名后 `execute_rename` 必须迁移 `.synapse-layout.json` 的键，
+    /// 否则前端拿到的布局里没有新 id，节点会丢坐标并重新布局。
+    #[tokio::test]
+    async fn execute_rename_migrates_layout_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::write(
+            kb_root.join("target.md"),
+            "<!-- @synapse-id: target -->\n# Target\n",
+        )
+        .unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+        crate::layout_store::update_position(&kb_root, "target", 120.0, -45.0).unwrap();
+
+        let result = execute_rename_impl(
+            &state,
+            "target".to_string(),
+            "target-v2".to_string(),
+            "".to_string(),
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.new_id, "target-v2");
+
+        let positions = crate::layout_store::load_positions(&kb_root);
+        let moved = positions
+            .get("target-v2")
+            .expect("renamed entry must keep its layout position");
+        assert_eq!(moved.x, 120.0);
+        assert_eq!(moved.y, -45.0);
+        assert!(
+            !positions.contains_key("target"),
+            "old layout key must be removed after rename"
+        );
+    }
+
+    /// 布局迁移失败必须让整个重命名回滚：文件、`@synapse-id`、级联引用、
+    /// 索引和布局都保持原状，不能出现“改名成功但坐标静默丢失”。
+    /// 这里把 `.synapse-layout.json.tmp` 预先建成目录，使 `save_layout`
+    /// 的临时文件写入必定失败（不影响真实 `.synapse-layout.json` 与文件移动）。
+    #[tokio::test]
+    async fn execute_rename_rolls_back_when_layout_migration_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::write(
+            kb_root.join("target.md"),
+            "<!-- @synapse-id: target -->\n# Target\n",
+        )
+        .unwrap();
+        std::fs::write(
+            kb_root.join("hub.md"),
+            "<!-- @synapse-id: hub -->\n# Hub\n\nSee [[target]].\n",
+        )
+        .unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+        crate::layout_store::update_position(&kb_root, "target", 120.0, -45.0).unwrap();
+        // 让 layout 的原子写失败。
+        std::fs::create_dir(kb_root.join(".synapse-layout.json.tmp")).unwrap();
+
+        let err = execute_rename_impl(
+            &state,
+            "target".to_string(),
+            "target-v2".to_string(),
+            "".to_string(),
+            true,
+        )
+        .await
+        .expect_err("layout failure must abort the rename");
+        assert!(matches!(err, AppError::LayoutMigrationFailed { .. }));
+
+        // 文件回到旧路径，新路径不存在，@synapse-id 还原。
+        assert!(kb_root.join("target.md").exists(), "old file must be restored");
+        assert!(!kb_root.join("target-v2.md").exists(), "new file must be removed");
+        let target = std::fs::read_to_string(kb_root.join("target.md")).unwrap();
+        assert!(target.contains("<!-- @synapse-id: target -->"));
+        // 级联引用还原。
+        let hub = std::fs::read_to_string(kb_root.join("hub.md")).unwrap();
+        assert!(hub.contains("[[target]]"), "cascade must be rolled back: {hub}");
+        assert!(!hub.contains("[[target-v2]]"));
+        // 索引恢复旧 id。
+        {
+            let idx = state.index.read().await;
+            let entries = idx.get_all_entries().unwrap();
+            assert!(entries.iter().any(|e| e.id == "target"));
+            assert!(!entries.iter().any(|e| e.id == "target-v2"));
+        }
+        // 布局保持旧键与坐标。
+        let positions = crate::layout_store::load_positions(&kb_root);
+        let kept = positions.get("target").expect("old layout key must survive");
+        assert_eq!(kept.x, 120.0);
+        assert_eq!(kept.y, -45.0);
+        assert!(!positions.contains_key("target-v2"));
+        // 回滚路径不能留下“本地写入”记录。
+        assert!(!state.all_paths_locally_written(&[kb_root.join("target-v2.md")]));
+        assert!(state.take_pending_renames().is_empty());
+    }
+
     /// Code blocks must NOT be touched by cascade. A `[[target]]` inside
     /// a ``` block should be preserved verbatim.
     #[tokio::test]
@@ -2297,5 +2524,132 @@ End of note.
         // Both files must be unchanged on disk.
         assert!(kb_root.join("alpha.md").exists());
         assert!(kb_root.join("beta.md").exists());
+    }
+
+    /// 解耦后的关键回归：嵌套扁平条目的重命名必须落在原来的物理目录，
+    /// 不能被 `group`（顶层目录）压平，新 id 也必须反映完整路径。
+    #[tokio::test]
+    async fn execute_rename_keeps_flat_nested_physical_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::create_dir_all(kb_root.join("topic").join("sub")).unwrap();
+        std::fs::write(
+            kb_root.join("topic").join("sub").join("note.md"),
+            "# Note\n",
+        )
+        .unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        let result = execute_rename_impl(
+            &state,
+            "topic-sub-note".to_string(),
+            "renamed".to_string(),
+            "topic/sub".to_string(), // 前端现在传 entry.dir，而不是 entry.group
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.new_id, "topic-sub-renamed");
+        assert!(kb_root.join("topic").join("sub").join("renamed.md").exists());
+        assert!(!kb_root.join("topic").join("sub").join("note.md").exists());
+        assert!(
+            !kb_root.join("topic").join("renamed.md").exists(),
+            "must not be flattened into the top-level group dir"
+        );
+
+        // 重建后物理 dir 与展示 group 仍然分离。
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+            let entries = idx.get_all_entries().unwrap();
+            assert_eq!(entries[0].id, "topic-sub-renamed");
+            assert_eq!(entries[0].group.as_deref(), Some("topic"));
+            assert_eq!(entries[0].dir.as_deref(), Some("topic/sub"));
+        }
+    }
+
+    /// R8: 非法新名 / 非法新目录必须在任何文件操作之前被拒绝。
+    #[tokio::test]
+    async fn execute_rename_rejects_invalid_name_and_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::write(kb_root.join("alpha.md"), "# Alpha\n").unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        for (name, group) in [
+            ("../escaped", ""),
+            ("alpha.md", ""),
+            ("a/b", ""),
+            ("fine", "../outside"),
+            ("fine", "/etc"),
+        ] {
+            let err = execute_rename_impl(
+                &state,
+                "alpha".to_string(),
+                name.to_string(),
+                group.to_string(),
+                true,
+            )
+            .await
+            .expect_err("invalid rename input must be rejected");
+            let msg = format!("{err}");
+            assert!(
+                msg.starts_with("name-") || msg.starts_with("parent-group-invalid"),
+                "unexpected error for {name:?}/{group:?}: {msg}"
+            );
+        }
+
+        // 原始文件必须完好，且没有越界文件被写出。
+        assert!(kb_root.join("alpha.md").exists());
+        assert!(!kb_root.parent().unwrap().join("escaped.md").exists());
+        assert!(!kb_root.join("..").join("outside").exists());
+    }
+
+    /// 目录布局的 group / dir 语义保持解耦前的行为：`@synapse-group`
+    /// 既用于展示，也用于拼写入目录。
+    #[tokio::test]
+    async fn execute_rename_directory_entry_keeps_group_semantics() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::create_dir_all(kb_root.join("frontend").join("my-note")).unwrap();
+        std::fs::write(
+            kb_root.join("frontend").join("my-note").join("content.md"),
+            "<!-- @synapse-group: frontend -->\n# My Note\n",
+        )
+        .unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        let result = execute_rename_impl(
+            &state,
+            "my-note".to_string(),
+            "my-note-v2".to_string(),
+            "frontend".to_string(),
+            true,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.new_id, "my-note-v2");
+        assert!(kb_root.join("frontend").join("my-note-v2").join("content.md").exists());
+
+        let idx = state.index.read().await;
+        idx.rebuild(&kb_root).unwrap();
+        let entries = idx.get_all_entries().unwrap();
+        assert_eq!(entries[0].id, "my-note-v2");
+        assert_eq!(entries[0].group.as_deref(), Some("frontend"));
+        assert_eq!(entries[0].dir.as_deref(), Some("frontend"));
     }
 }

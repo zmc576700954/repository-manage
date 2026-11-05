@@ -31,7 +31,11 @@ export interface Entry {
   title: string;
   tags: string[];
   labels: string[];
+  /// 展示用分组：扁平布局下是顶层目录名；不要用它拼路径。
   group?: string;
+  /// 条目真实磁盘归属的完整相对子路径（`/` 分隔）。新建/重命名/侧栏树
+  /// 等一切涉及路径的地方都必须用这个字段。
+  dir?: string | null;
   path: string;
   contentPath: string;
   attachments: Attachment[];
@@ -51,7 +55,9 @@ export interface StoredEntry {
   id: string;
   title: string;
   path: string;
+  contentPath: string;
   group?: string | null;
+  dir?: string | null;
   tags: string[];
   attachments: Attachment[];
   relations: Relation[];

@@ -118,22 +118,23 @@ export function Sidebar() {
     []
   );
 
-  // 已存在的顶级分组（用于 dialog 选择）
+  // 已存在的顶级分组（用于 dialog 选择）——按物理目录的首段推导
   const topLevelGroups = useMemo(() => {
     const set = new Set<string>();
     for (const e of entries) {
-      if (e.group) set.add(e.group.split('/')[0]);
+      if (e.dir) set.add(e.dir.split('/')[0]);
     }
     return Array.from(set).sort();
   }, [entries]);
 
   const existingGroupsFull = useMemo(() => {
     const set = new Set<string>();
-    for (const e of entries) if (e.group) set.add(e.group);
+    for (const e of entries) if (e.dir) set.add(e.dir);
     return Array.from(set).sort();
   }, [entries]);
 
-  /** 把 entries 构造为嵌套树。group 是 "compliance/gdpr" 这种路径式字符串。 */
+  /** 把 entries 构造为嵌套树。用 `dir`（物理路径）而不是 `group`（展示用
+   *  顶层目录），否则 group 变成顶层目录后侧栏会丢掉嵌套层级。 */
   const tree = useMemo(() => buildTree(entries), [entries]);
 
   const toggleNode = (key: string) => {
@@ -357,20 +358,20 @@ function countItems(node: GroupNode): number {
 }
 
 function buildTree(entries: Entry[]): TreeNode[] {
-  // 先按 group 分组
+  // 先按物理目录 `dir` 分组（`group` 只是展示用的顶层分类，会丢层级）
   const buckets = new Map<string, Entry[]>();
   const ungrouped: Entry[] = [];
   for (const e of entries) {
-    if (!e.group) {
+    if (!e.dir) {
       ungrouped.push(e);
     } else {
-      const arr = buckets.get(e.group) ?? [];
+      const arr = buckets.get(e.dir) ?? [];
       arr.push(e);
-      buckets.set(e.group, arr);
+      buckets.set(e.dir, arr);
     }
   }
 
-  // 收集所有出现过的 group path 段（包括中间段）
+  // 收集所有出现过的 dir 路径段（包括中间段）
   const allPaths = new Set<string>();
   for (const g of buckets.keys()) {
     const parts = g.split('/');
