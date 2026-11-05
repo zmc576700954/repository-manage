@@ -372,3 +372,79 @@
 | 前端无单测 / 固定 `/tmp` 残留 | 已修 | `npm run test:unit` 走 `scripts/run-unit-tests.mjs`：esbuild + `node --test`，产物在 `mkdtemp` 目录并在 `finally` 清理；启动时 `cleanup-temp.mjs` 只清理 `synapse-unit-*` 且 mtime 超过 24h 的目录 |
 
 仍未处理：R9（`fs/backup.rs` 根目录推导）、R10（全量 rebuild / N+1 查询）、R14（CSP 为 `null`）。
+
+## 12. 三批功能落地（2026-11-05）
+
+本节补充批次 1–3 新增的模块与流程；上文 1–11 节仍然有效，冲突处以本节为准。
+
+### 12.1 版本历史、回退与裁剪（批次 1）
+
+- 存储位置：`<kb>/.synapse/history/<entry_key>/<version_id>.json|.md`。`entry_key` 由条目 id 的安全化字符串加 `fnv1a64` 的 8 位十六进制后缀组成，避免不同 id 安全化后重名（`history::entry_key`）。
+- 版本元数据 `VersionMeta` 记录 `origin`（manual / autosave / external / restore / trim）、增删行摘要、内容哈希与 `content_stored`。正文超过 `MAX_STORED_CONTENT_BYTES`（2 MiB）时只存元数据并把 `content_stored` 置为 false。
+- 去重与节流：普通保存若内容哈希与最新版本相同则不追加；`autosave` 距上一版本不足 `AUTOSAVE_MIN_INTERVAL_MS`（5 分钟）时跳过；回退总是追加新版本并带 `restored_from`，保证“回退也留痕”。
+- 裁剪 `trim_history` 语义：保留 `keep_version_id` 及其之后的全部版本，删除更早的 `.json` + `.md`，随后追加一条 `origin=trim` 的审计元数据（`content_stored=false`，note 记录删除区间与释放字节）。`trim_preview` 先给出删除数量与可释放空间，UI 必须预览并二次确认。裁剪命令持有 `write_lock`，且不可恢复。
+- 告警 `warnings`：单条目非 trim 版本超过 `PER_ENTRY_WARN_COUNT`（200）或历史目录总大小超过 `TOTAL_WARN_BYTES`（5 GiB）时提示。
+- 回退 `restore_entry_version` 读取历史正文后走 `write_entry_content(origin=restore, restored_from=version_id)`，因此当前文件被覆盖前同样会先记录一条版本。
+- 前端入口集中在 `src/components/VersionHistorySection.tsx` 与 `src/utils/lineDiff.ts`；命令层为 `list_entry_versions` / `get_entry_version_content` / `get_history_warnings` / `preview_trim_entry_history` / `trim_entry_history` / `restore_entry_version`。
+
+### 12.2 编辑器草稿、自动保存与外部变更（批次 1）
+
+- 原子写入统一走 `content_io::write_atomic`：同目录临时文件写入后 rename，失败时原文件保持完整。
+- 草稿按 `kb id + entry id` 隔离存放在 localStorage（`src/utils/editorDraft.ts` 的 `draftKey` / `readDraft` / `writeDraft` / `clearDraft` / `pendingDraft`）。编辑器每 `DRAFT_AUTOSAVE_MS`（30 秒）写一次草稿；恢复草稿使用 `pendingDraft`，避免把其它条目的草稿串到当前条目。
+- 外部变更：watcher 推送后 `DetailPanel` 对比磁盘内容与编辑器基准。无未保存修改时替换编辑器内容并清理草稿；有未保存修改时保留编辑内容，提示用户选择“重新加载磁盘版本”或“保留我的编辑”。草稿归属用 ref 校验，避免切换条目后误写。
+- 保存结果通过 `SaveEntryResult` 返回是否真的写盘及变更行摘要，供 UI 显示“已保存/无变化”。
+
+### 12.3 无损排版（批次 1）
+
+- `formatter::format_content` 只调整版面，不改写语义。受保护区域包括 YAML front matter、围栏代码块、表格、`@synapse` 元数据注释、wikilink、行内代码与链接目标，均原样保留；这些区域的识别用逐字符扫描而非正则替换。
+- 规范化内容：标题 `#` 后空格、列表标记与缩进、CJK 与拉丁字符之间补空格、行尾空白；不压缩连续空行，保留 CRLF / 混合换行，输出幂等。
+- 命令 `preview_format_entry` 返回 `FormatOutcome`（成品、是否变化、变更行数），`apply_format_entry` 在写锁内写回；前端用 `lineDiff.ts` 的 `changedLinePairs` 在预览对话框里高亮差异。
+
+### 12.4 同 KB 移动（批次 1）
+
+- `move_entry_impl` 从旧路径推导名称（目录取目录名，文件取去 `.md` 的主干名），随后复用重命名管线 `execute_rename_impl(id, name, target_dir, cascade=true)`，因此移动与改名共享校验、级联、历史与布局迁移及回滚。
+- UI 的移动对话框（`DetailPanel`）展示目标目录、迁移后的 id、附件是否随目录迁移与失败回滚说明；成功后按新 id 重新选中。
+
+### 12.5 模版字头与冲突处理（批次 2）
+
+- KB 配置经 `get_kb_config` / `update_kb_config` 读取和写回 `.synapse-config.yaml`；`useAppStore.loadKbConfig` 在切换 KB 后加载，`saveTemplateHeader` 做读-改-写，只更新 `templateHeader`，保留配置里的其它键。
+- `src/utils/templateHeader.ts` 是纯逻辑：`findFrontMatter` / `bodyStartLine` 定位正文起点（跳过 front matter、开头的空行与元数据注释），`insertTemplateHeader` 返回 `inserted` / `already-present` / `conflict` / `empty`。
+- 冲突规则：字头本身是 YAML front matter 而文档已有 front matter 时返回 `conflict`，绝不静默替换；正文已含相同字头时返回 `already-present`。插入成功后仍走普通保存流程记录版本。Settings 提供字头编辑区，DetailPanel 提供插入按钮与状态提示。
+
+### 12.6 快捷关联与 `@relation` 写入（批次 2）
+
+- `RelationDialog` 支持按标题/id/标签搜索目标，并用 `hasSameType` 阻止同类型关系重复创建；`beforeCreate` 钩子先保存脏编辑器，避免后端追加关系时丢弃未保存正文。
+- `create_relation` 在来源正文末尾追加一行 `@relation: <type> [[<target id>]]`，落盘成功后登记本地写入并写入索引关系表；store 层把命令成功/异常折算为布尔值，供对话框显示失败原因。
+
+### 12.7 目录迁移管线（批次 3）
+
+`precheck_rename` 先返回 `valid`、`newId`、`conflictWith`、`incomingCount` / `incomingFiles`（会被级联改写的引用），供 UI 预览；`execute_rename_impl` 在 `write_lock` 内按序执行：
+
+1. 校验新名与新目录（复用新建条目的 `validate_filename` / `validate_parent_group`，拒绝 `.md` 后缀）。
+2. 解析旧路径，按目录/扁平格式计算 `new_path` 与 `new_id`。
+3. 冲突检查：先查 id 冲突，再查路径已存在。
+4. 级联把其它文档中的 `[[old_id]]` 替换为 `[[new_id]]`（跳过代码块），并缓存原文用于回滚。
+5. 移动文件/目录（目录条目连同附件一起移动）。
+6. 更新条目的 `@synapse-id` 与 id 文件、改写 SQLite 索引行。
+7. 迁移历史目录（`history::migrate_entry_history`，目标已存在则报错而不覆盖）。
+8. 迁移 `.synapse-layout.json` 的键。
+9. rebuild 索引刷新派生字段。
+
+任一步失败调用 `rollback_rename_state`：恢复级联文件、DB 行、id 文件与文件移动；历史迁移失败返回 `HistoryMigrationFailed`，布局迁移失败先把历史搬回旧 id 再回滚，返回 `LayoutMigrationFailed`。若回滚本身有残留，错误信息附带 `rollback incomplete: ...`，UI 明确提示而不是假装成功。
+
+### 12.8 阅读排版的 CSS 变量与默认/恢复默认（批次 3）
+
+- `src/store/readingPrefsStore.ts` 持久化到 localStorage `synapse.readingPrefs`，`normalizeReadingPrefs` 把外部值收敛到合法区间：字号 13–20、行高 1.4–2.2、段间距 0.2–1.4em、最大宽度 50–110ch（0 表示不限制）、代码字号 11–16、表格样式 bordered/striped。
+- 默认值：字号 15px、行高 1.7、段间距 0.7em、最大宽度 78ch、代码字号 12.5px、bordered。
+- `MarkdownView` 把偏好写成 CSS 变量 `--md-font-size` / `--md-line-height` / `--md-paragraph-gap` / `--md-max-width` / `--md-code-size`，并以 `data-table-style` 切换表格样式；`styles.css` 的 Markdown 规则读取这些变量。
+- Settings 提供滑块与“恢复默认”（`reset`），恢复默认同时把持久化值写回默认值。
+
+### 12.9 面板过渡与 `prefers-reduced-motion`（批次 3）
+
+- `.panel-enter` 使用 180ms `cubic-bezier(0.2, 0.8, 0.2, 1)` 淡入上移；`.list-enter` 使用 160ms ease-out。分别用于右面板、侧栏列表与详情面板的关系/标签列表。
+- `@media (prefers-reduced-motion: reduce)` 下两类动画均禁用，避免对动效敏感的用户产生干扰。
+
+### 12.10 指纹缓存与测试隔离（批次 1）
+
+- `fingerprint.rs` 生产路径使用进程级 `Mutex` 缓存；`cfg(test)` 下改用 `thread_local` 缓存，避免并行测试共享缓存造成 flake。
+- `commands.rs` 与 `lib.rs` 的测试临时 DB/registry 路径在时间戳后追加进程内 `AtomicU64` 自增序号，消除同一毫秒内创建同名路径的碰撞。
