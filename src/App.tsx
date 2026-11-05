@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { listen } from '@tauri-apps/api/event';
 import { Sidebar } from '@/components/Sidebar';
 import { ErrorBar } from '@/components/ErrorBar';
 import { FixDrawer } from '@/components/FixDrawer';
@@ -7,6 +8,10 @@ import { MapView } from '@/views/MapView';
 import { useAppStore } from '@/store/useAppStore';
 import { usePanelStore } from '@/store/panelStore';
 import { RightPanelStack } from '@/components/RightPanelStack';
+import {
+  createKbRefreshCoordinator,
+  type KbChangedPayload,
+} from '@/events/kbRefresh';
 
 export default function App() {
   const { t } = useTranslation('App');
@@ -23,6 +28,44 @@ export default function App() {
   useEffect(() => {
     refreshKbs().then(() => loadEntries());
   }, [refreshKbs, loadEntries]);
+
+  // 外部（watcher）重建完成后自动刷新图谱：防抖合并、避开自身写操作回声，
+  // 重命名/拖拽进行中延迟刷新。事件的产生时机见 lib.rs 的 emit 逻辑。
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    const coordinator = createKbRefreshCoordinator({
+      getActiveKbId: () => useAppStore.getState().activeKbId,
+      isBusy: () => {
+        const state = useAppStore.getState();
+        return (
+          state.renamingEntryId !== null ||
+          state.interactionBusy ||
+          state.isDraggingNode
+        );
+      },
+      apply: (payload) => {
+        void useAppStore.getState().applyKbChanged(payload);
+      },
+    });
+
+    void listen<KbChangedPayload>('kb-changed', (event) => {
+      coordinator.handle(event.payload);
+    })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {
+        // 非 Tauri 环境（例如纯浏览器预览）没有事件系统，忽略即可。
+      });
+
+    return () => {
+      disposed = true;
+      coordinator.dispose();
+      unlisten?.();
+    };
+  }, []);
 
   const errorCount = entries.reduce((sum, e) => sum + (e.errorCount ?? 0), 0);
   const warningCount = entries.reduce((sum, e) => sum + (e.warningCount ?? 0), 0);

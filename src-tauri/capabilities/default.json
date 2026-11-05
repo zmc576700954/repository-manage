@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default capabilities for Synapse KB",
   "windows": ["main"],
-  "permissions": ["dialog:default", "store:default"]
+  "permissions": ["dialog:default", "store:default", "core:event:default"]
 }

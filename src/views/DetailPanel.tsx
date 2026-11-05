@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/store/useAppStore';
@@ -97,6 +97,7 @@ export function DetailPanel() {
   const { t } = useTranslation('DetailPanel');
   const { t: tMd } = useTranslation('MarkdownView');
   const selectedEntryId = useAppStore((s) => s.selectedEntryId);
+  const entriesRevision = useAppStore((s) => s.entriesRevision);
   const entries = useAppStore((s) => s.entries);
   const kbs = useAppStore((s) => s.kbs);
   const activeKbId = useAppStore((s) => s.activeKbId);
@@ -123,10 +124,17 @@ export function DetailPanel() {
     markdown: null,
     error: null,
   });
+  /// 已加载的条目 id 与正文原文：列表刷新但正文没变时保持当前渲染，
+  /// 不重置滚动位置、不替换用户正在查看的源码视图。
+  /// 直接比较原文（而非哈希）：零碰撞、无需额外计算，代价只是多持有
+  /// 一份已显示过的字符串引用。
+  const loadedEntryIdRef = useRef<string | null>(null);
+  const lastContentRef = useRef<string | null>(null);
   const [viewMode, setViewMode] = useState<'rendered' | 'source'>('rendered');
   const [extLinks, setExtLinks] = useState<ExtLink[]>([]);
   const [showRelDialog, setShowRelDialog] = useState(false);
   const [showRename, setShowRename] = useState(false);
+  const setInteractionBusy = useAppStore((s) => s.setInteractionBusy);
   const renamingEntryId = useAppStore((s) => s.renamingEntryId);
   const setRenamingEntryId = useAppStore((s) => s.setRenamingEntryId);
   const [linkBusy, setLinkBusy] = useState<number | null>(null);
@@ -154,23 +162,41 @@ export function DetailPanel() {
     [entries, selectedEntryId]
   );
 
+  // 正文加载：选中项变化时重置并拉取；列表因 watcher 事件刷新
+  // （entriesRevision 变化）而选中项不变时，重新拉取正文并与原文比对，
+  // 只有正文真的变了才替换内容。这样外部直接编辑 `.md` 正文能自动反映，
+  // 同时不会覆盖用户正在输入的正文/元数据，也不抢焦点（内容未变时完全
+  // 不 setState）。直接比较原文比哈希更可靠，也不额外消耗计算。
   useEffect(() => {
     if (!selectedEntryId) {
+      loadedEntryIdRef.current = null;
+      lastContentRef.current = null;
       setContent({ markdown: null, error: null });
       setExtLinks([]);
       setViewMode('rendered');
       return;
     }
+    const sameEntry = loadedEntryIdRef.current === selectedEntryId;
+    loadedEntryIdRef.current = selectedEntryId;
     let cancelled = false;
-    setContent({ markdown: null, error: null });
-    setExtLinks([]);
-    setLinkMsg({});
-    setViewMode('rendered');
+    if (!sameEntry) {
+      setContent({ markdown: null, error: null });
+      setExtLinks([]);
+      setLinkMsg({});
+      setViewMode('rendered');
+      lastContentRef.current = null;
+    }
     invoke<string | null>('get_entry_content', { id: selectedEntryId })
       .then((text) => {
         if (cancelled) return;
+        if (sameEntry && text === lastContentRef.current) {
+          // 正文没变：保持当前内容（含滚动位置与渲染/源码视图）。
+          return;
+        }
+        lastContentRef.current = text;
         if (text == null) {
           setContent({ markdown: null, error: t('contentErrorMissing') });
+          setExtLinks([]);
         } else {
           setContent({ markdown: text, error: null });
           setExtLinks(parseMarkdownLinksClient(text));
@@ -178,12 +204,13 @@ export function DetailPanel() {
       })
       .catch((e) => {
         if (cancelled) return;
+        lastContentRef.current = null;
         setContent({ markdown: null, error: (e as Error).message });
       });
     return () => {
       cancelled = true;
     };
-  }, [selectedEntryId]);
+  }, [selectedEntryId, entriesRevision, t]);
 
   /// Cycle 3 polish B: when the store asks us to open the rename dialog
   /// for an id, open it. We clear the store value back to null so the
@@ -200,19 +227,31 @@ export function DetailPanel() {
     }
   }, [renamingEntryId, selectedEntryId, selectEntry, openPanel, setRenamingEntryId]);
 
-  if (!entry) {
-    return null;
-  }
+  // 重命名对话框打开期间标记交互忙：watcher 的自动刷新会推迟到关闭之后，
+  // 避免外部变更在对话框开着时把列表/面板刷掉或抢走焦点。
+  useEffect(() => {
+    setInteractionBusy(showRename);
+    return () => setInteractionBusy(false);
+  }, [showRename, setInteractionBusy]);
 
+  // 所有 Hook 必须无条件执行：重命名过程中 selectedEntryId 会切到新 id，
+  // 期间 entries 还没刷新完，entry 可能短暂为 undefined。如果把
+  // `if (!entry) return null` 放在 hook 之前，这次渲染会少调用一个 Hook，
+  // React 直接报 "Rendered fewer hooks than expected" 并让整个 UI 崩溃。
   const groupedRelations = useMemo(() => {
     const outgoing: Relation[] = [];
     const incoming: Relation[] = [];
+    if (!entry) return { outgoing, incoming };
     for (const rel of entry.relations) {
       if (rel.fromId === entry.id) outgoing.push(rel);
       else if (rel.toId === entry.id) incoming.push(rel);
     }
     return { outgoing, incoming };
   }, [entry]);
+
+  if (!entry) {
+    return null;
+  }
 
   const handleInternalLink = async (idx: number, link: ExtLink) => {
     if (!entry) return;

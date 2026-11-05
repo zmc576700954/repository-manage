@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, KeyboardEvent } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef, KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/store/useAppStore';
 import type { Entry } from '@shared/types';
@@ -25,10 +25,38 @@ export function EntryMetadataEditor({ entry }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const savedAtRef = useRef<number | null>(null);
+  // 用户在面板内输入/提交期间的本地草稿不能被外部刷新覆盖；卸载前
+  // watcher 事件可能随时到达，所以用 ref 记录焦点与在途提交。
+  const rootRef = useRef<HTMLDivElement>(null);
+  const pendingCommitsRef = useRef(0);
+
+  // 外部（watcher 事件触发的静默刷新）改了元数据后，把最新值同步到本地
+  // 草稿，否则面板会一直展示挂载时的旧值。焦点在面板内或有提交未完成时
+  // 跳过，避免打断输入、抢焦点或覆盖用户刚敲的内容。
+  const externalSnapshot = useMemo(
+    () => JSON.stringify([entry.title, entry.tags, entry.labels, entry.status ?? 'stable']),
+    [entry.title, entry.tags, entry.labels, entry.status]
+  );
+  const syncedSnapshotRef = useRef(externalSnapshot);
+
+  useEffect(() => {
+    // 内容没变（只是 entries 数组产生新引用）时不重设本地 state，
+    // 避免每次静默刷新都让整块面板重绘。
+    if (syncedSnapshotRef.current === externalSnapshot) return;
+    if (pendingCommitsRef.current > 0) return;
+    const active = document.activeElement;
+    if (rootRef.current && active && rootRef.current.contains(active)) return;
+    syncedSnapshotRef.current = externalSnapshot;
+    setTitle(entry.title);
+    setTags(entry.tags);
+    setLabels(entry.labels);
+    setStatus(entry.status ?? 'stable');
+  }, [externalSnapshot, entry.title, entry.tags, entry.labels, entry.status]);
 
   const commit = useCallback(
     (changes: { title?: string; tags?: string[]; labels?: string[]; status?: string }) => {
       setError(null);
+      pendingCommitsRef.current += 1;
       return updateMetadata(entry.id, changes)
         .then(() => {
           const now = Date.now();
@@ -48,6 +76,9 @@ export function EntryMetadataEditor({ entry }: Props) {
           setTags(entry.tags);
           setLabels(entry.labels);
           setStatus(entry.status ?? 'stable');
+        })
+        .finally(() => {
+          pendingCommitsRef.current -= 1;
         });
     },
     [entry.id, entry.title, entry.tags, entry.labels, entry.status, updateMetadata]
@@ -94,7 +125,7 @@ export function EntryMetadataEditor({ entry }: Props) {
   };
 
   return (
-    <div className="border-b border-gray-200 p-4">
+    <div ref={rootRef} className="border-b border-gray-200 p-4">
       {/* Title (editable inline) */}
       <div className="mb-3">
         <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-gray-500">

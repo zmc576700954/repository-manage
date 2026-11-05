@@ -185,6 +185,31 @@ pub async fn get_entries(state: State<'_, AppState>) -> AppResult<Vec<StoredEntr
     Ok(entries)
 }
 
+/// `get_entries` 的原子版本：同一次读取里同时返回条目和内容指纹。
+///
+/// 前端用返回值里的指纹作为“我当前展示的数据版本”。如果分两次调用
+/// （先取条目、再取指纹），中间的 watcher 重建会让两者不一致，从而把
+/// 真实的外部变更误判成自身回声丢掉。注意指纹包含正文文件的
+/// `size + mtime`，因此只改正文也会体现在里面。
+#[tauri::command]
+pub async fn get_entries_snapshot(state: State<'_, AppState>) -> AppResult<EntriesSnapshot> {
+    let _gate = state.startup_gate.read().await;
+    let idx = state.index.read().await;
+    let entries = idx.get_all_entries()?;
+    let fingerprint = crate::entries_fingerprint(&entries);
+    Ok(EntriesSnapshot {
+        entries,
+        fingerprint,
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntriesSnapshot {
+    pub entries: Vec<StoredEntry>,
+    pub fingerprint: String,
+}
+
 #[tauri::command]
 pub async fn active_kb_entry_count(state: State<'_, AppState>) -> AppResult<usize> {
     // 与 `get_entries` 同样等启动 rebuild 结束，避免首屏拿到旧计数。
@@ -239,6 +264,8 @@ pub async fn create_relation(
     };
 
     append_relation_line(&from_path, &to_path, &to_id, &relation_type)?;
+    // 只有落盘成功后才登记“本地写入”，失败时不会污染来源标记。
+    state.note_local_write(&from_path);
 
     let idx = state.index.read().await;
     idx.add_relation(&from_id, &to_id, &relation_type, note.as_deref())?;
@@ -267,7 +294,9 @@ pub async fn delete_relation(
                 id: from_id.clone(),
             })?
     };
-    remove_wikilink_line(&from_path, &to_id)?;
+    if remove_wikilink_line(&from_path, &to_id)? {
+        state.note_local_write(&from_path);
+    }
 
     let idx = state.index.read().await;
     idx.remove_relation(&from_id, &to_id, &relation_type)?;
@@ -283,7 +312,7 @@ pub async fn delete_relation(
 /// links are left alone, since rebuild treats them as a separate codepath
 /// (`is_attachment_url` + path-stem lookup) and removing them is not
 /// part of "delete this relation."
-fn remove_wikilink_line(path: &std::path::Path, to_id: &str) -> AppResult<()> {
+fn remove_wikilink_line(path: &std::path::Path, to_id: &str) -> AppResult<bool> {
     let content = std::fs::read_to_string(path).unwrap_or_default();
     let needle = format!("[[{to_id}]]");
 
@@ -303,7 +332,7 @@ fn remove_wikilink_line(path: &std::path::Path, to_id: &str) -> AppResult<()> {
         kept.push(line);
     }
     if !removed {
-        return Ok(());
+        return Ok(false);
     }
     let mut new_content: String = kept.iter().copied().collect();
     if !trailing_nl && !new_content.ends_with('\n') {
@@ -311,7 +340,7 @@ fn remove_wikilink_line(path: &std::path::Path, to_id: &str) -> AppResult<()> {
     }
     let _ = trailing_nl;
     std::fs::write(path, new_content)?;
-    Ok(())
+    Ok(true)
 }
 
 /// Delete an entry: remove the `.md` file from disk and the row from the
@@ -343,6 +372,7 @@ pub async fn delete_entry(
             e,
         ))?;
     }
+    state.note_local_write(&path);
 
     let idx = state.index.read().await;
     idx.remove_entry(&id)?;
@@ -423,6 +453,8 @@ pub async fn create_entry_simple(
     // 1) 写新 .md
     let initial = content.unwrap_or_else(|| format!("# {name}\n\n<!-- TODO: 在此补充内容 -->\n"));
     std::fs::write(&file_path, &initial)?;
+    // 新文件已落盘：登记为本地写入（含后续可能追加关系行的源文件）。
+    let mut touched_paths: Vec<std::path::PathBuf> = vec![file_path.clone()];
 
     let rtype = relation_type.as_deref().unwrap_or("reference");
 
@@ -439,6 +471,7 @@ pub async fn create_entry_simple(
         append_relation_line(&from_path, &file_path, &new_id, rtype)?;
         let idx = state.index.read().await;
         idx.add_relation(from_id, &new_id, rtype, note.as_deref())?;
+        touched_paths.push(from_path);
     }
 
     // 3) 下级模式：新 entry 是 from，关系方向 新 entry → source
@@ -468,6 +501,9 @@ pub async fn create_entry_simple(
         idx.resolve_links_for_entry(&kb_root, &raw)?;
     }
 
+    for path in &touched_paths {
+        state.note_local_write(path);
+    }
     Ok(new_id)
 }
 
@@ -538,6 +574,10 @@ pub async fn create_entry_from_reference(
         let idx = state.index.read().await;
         idx.rebuild(&kb_root)?;
     }
+
+    // 两个文件都已成功落盘，登记为本地写入。
+    state.note_local_write(&file_path);
+    state.note_local_write(&from_path);
 
     Ok(new_id)
 }
@@ -723,6 +763,9 @@ async fn load_active_kb(state: &AppState, kb_id: &str) -> AppResult<()> {
         let mut cur = state.current_kb.write().await;
         *cur = Some(kb.clone());
     }
+    // 旧 KB 上尚未下发、或已被命令内部 rebuild 吞掉的重命名增量不能
+    // 带到新 KB 的事件里。
+    let _ = state.take_pending_renames();
 
     // Swap the file watcher to track the new KB root. Dropping the previous
     // WatcherHandle unregisters the old OS watch; the new one watches the
@@ -747,6 +790,8 @@ async fn clear_active_kb(state: &AppState) -> AppResult<()> {
         let mut cur = state.current_kb.write().await;
         *cur = None;
     }
+    // 无活动 KB：丢弃尚未下发的重命名增量，避免泄漏到下一个 KB。
+    let _ = state.take_pending_renames();
     // No active KB → no KB to watch. Drop the watcher.
     swap_watcher(state, None);
     Ok(())
@@ -892,6 +937,10 @@ pub async fn apply_fix(
         &entry_dir,
         confirm,
     )?;
+    // 只有真正执行（confirm=true）才写盘；预览不应留下“本地写”标记。
+    if confirm {
+        state.note_local_write(&md_path);
+    }
 
     // 5) Rebuild so the UI reflects the new content on the next read.
     //    Errors here are not fatal — the on-disk fix already succeeded;
@@ -944,6 +993,8 @@ pub async fn restore_backup(
             id: backup_id.clone(),
         })?;
     crate::fs::backup::restore_backup(&backup)?;
+    // 备份已恢复到 original_path，登记为本地写入。
+    state.note_local_write(&backup.original_path);
 
     if let Ok(idx) = state.index.try_read() {
         let _ = idx.rebuild(&kb_root);
@@ -1040,6 +1091,8 @@ pub async fn update_entry_metadata_impl(
 
     // 3) Rewrite the @synapse-* comments.
     crate::parser::metadata_updater::apply_metadata_changes(&path, &changes)?;
+    // 落盘成功后才登记；校验失败/写盘失败不会留下来源标记。
+    state.note_local_write(&path);
 
     // 4) Rebuild the index so the DB reflects the new file content.
     let kb_root = kb_root_or_err(state).await?;
@@ -1638,6 +1691,8 @@ mod tests {
             watcher: Arc::new(std::sync::Mutex::new(None)),
             watch_tx: Arc::new(std::sync::Mutex::new(None)),
             startup_gate: Arc::new(tokio::sync::RwLock::new(())),
+            local_write_paths: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            pending_renames: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 

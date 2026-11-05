@@ -3,6 +3,12 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Entry, KBInfo, MetadataChanges, PrecheckRenameResult, RelationType, RenameResult, StoredEntry } from '@shared/types';
 import { localizeError } from '@/i18n/translateError';
 import { usePanelStore } from './panelStore';
+import { setSyncedFingerprint, type KbChangedPayload } from '@/events/kbRefresh';
+
+interface EntriesSnapshot {
+  entries: Entry[];
+  fingerprint: string;
+}
 
 interface AppState {
   entries: Entry[];
@@ -15,13 +21,30 @@ interface AppState {
   kbs: KBInfo[];
   activeKbId: string | null;
   activeKbEntryCount: number;
+  /// 每次 entries 被刷新时递增。详情面板据此判断“列表刷新了”，
+  /// 在不改变选中项的前提下重新核对正文内容。
+  entriesRevision: number;
 
   /// Entry id that should have its rename dialog opened. DetailPanel
   /// watches this and shows RenameEntryDialog when it changes (then
   /// clears it back to null via `clearRenamingEntryId`).
   renamingEntryId: string | null;
+  /// 节点是否正在被拖拽（MapView 维护）。watcher 事件在此期间延后刷新，
+  /// 避免刷新 nodes 打断拖拽或让节点回弹。
+  isDraggingNode: boolean;
+  /// 是否有模态交互正在进行（重命名对话框等，由详情面板维护）。
+  /// watcher 事件在此期间延后刷新，避免抢焦点或重置面板。
+  interactionBusy: boolean;
 
   loadEntries: () => Promise<void>;
+  /// 由 `kb-changed` 事件触发的静默刷新：不置 isLoading（不遮整屏）、
+  /// 不改 selectedEntryId（不抢焦点/不重置面板），失败也不弹错误。
+  refreshEntriesQuiet: () => Promise<void>;
+  /// watcher 事件的统一入口：先按 renamed/removed 增量修正选中项，
+  /// 再静默刷新列表。
+  applyKbChanged: (payload: KbChangedPayload) => Promise<void>;
+  setDraggingNode: (dragging: boolean) => void;
+  setInteractionBusy: (busy: boolean) => void;
   selectEntry: (id: string | null) => void;
   toggleRelationType: (type: RelationType) => void;
   toggleFilterLabel: (label: string) => void;
@@ -79,17 +102,62 @@ export const useAppStore = create<AppState>((set, get) => ({
   kbs: [],
   activeKbId: null,
   activeKbEntryCount: 0,
+  entriesRevision: 0,
   renamingEntryId: null,
+  isDraggingNode: false,
+  interactionBusy: false,
 
   loadEntries: async () => {
     set({ isLoading: true, error: null });
     try {
-      const entries = await invoke<Entry[]>('get_entries');
-      set({ entries, isLoading: false, activeKbEntryCount: entries.length });
+      // 条目与指纹必须来自同一次读取：分两次取会让中间的重建把两者
+      // 拆开，导致回声判定误吞外部变更。
+      const snapshot = await invoke<EntriesSnapshot>('get_entries_snapshot');
+      set((s) => ({
+        entries: snapshot.entries,
+        isLoading: false,
+        activeKbEntryCount: snapshot.entries.length,
+        entriesRevision: s.entriesRevision + 1,
+      }));
+      setSyncedFingerprint(snapshot.fingerprint);
     } catch (e) {
       set({ error: errMsg(e), isLoading: false });
     }
   },
+
+  refreshEntriesQuiet: async () => {
+    try {
+      const snapshot = await invoke<EntriesSnapshot>('get_entries_snapshot');
+      set((s) => ({
+        entries: snapshot.entries,
+        activeKbEntryCount: snapshot.entries.length,
+        entriesRevision: s.entriesRevision + 1,
+      }));
+      setSyncedFingerprint(snapshot.fingerprint);
+    } catch {
+      // 外部变更触发的静默刷新失败时保留旧数据，等待下一次事件；
+      // 不覆盖 store.error，避免自动刷新把用户正在看的错误顶掉。
+    }
+  },
+
+  applyKbChanged: async (payload) => {
+    const selected = get().selectedEntryId;
+    if (selected) {
+      const renamed = payload.renamed?.find((r) => r.fromId === selected);
+      if (renamed) {
+        // 选中项被重命名：直接跟到新 id，面板不闪、不丢失。
+        set({ selectedEntryId: renamed.toId });
+      } else if (payload.removed.includes(selected)) {
+        // 选中项被外部删除：清空选择并关闭详情面板。
+        set({ selectedEntryId: null });
+        usePanelStore.getState().close('detail');
+      }
+    }
+    await get().refreshEntriesQuiet();
+  },
+
+  setDraggingNode: (dragging) => set({ isDraggingNode: dragging }),
+  setInteractionBusy: (busy) => set({ interactionBusy: busy }),
 
   selectEntry: (id) => set({ selectedEntryId: id }),
 
@@ -256,14 +324,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Don't clear selection eagerly — wait for loadEntries so we know
       // what the new KB's entry ids look like, then decide.
       await get().refreshKbs();
-      const newEntries = await invoke<Entry[]>('get_entries');
+      const snapshot = await invoke<EntriesSnapshot>('get_entries_snapshot');
+      const newEntries = snapshot.entries;
       const newIds = new Set(newEntries.map((e) => e.id));
       const stillExists = prevSelection !== null && newIds.has(prevSelection);
       set({
         entries: newEntries,
         activeKbEntryCount: newEntries.length,
+        entriesRevision: get().entriesRevision + 1,
         selectedEntryId: stillExists ? prevSelection : null,
       });
+      setSyncedFingerprint(snapshot.fingerprint);
       if (!stillExists) {
         usePanelStore.getState().close('detail');
       }
@@ -305,6 +376,10 @@ export const useAppStore = create<AppState>((set, get) => ({
             : e
         ),
       }));
+      // 静默重取一次列表：metadata 写入可能落在外部的同秒变更之前/之后，
+      // 用一次原子快照确保 entries 与自己的指纹一致，避免后续把真实外部
+      // 变更当成回声丢掉。refreshEntriesQuiet 内部会同步指纹。
+      await get().refreshEntriesQuiet();
       return updated;
     } catch (e) {
       // Revert
