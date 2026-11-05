@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::entry::{read_md_file, RawEntry};
+use crate::entry::{read_entry_path, RawEntry};
 use crate::paths::index_db_path;
-use crate::scanner::find_md_files;
+use crate::scanner::scan_entry_paths;
 
 /// Parse a JSON array string from SQLite back into a `Vec<String>`.
 /// Returns an empty vec when the column is NULL or holds an empty string
@@ -32,7 +32,9 @@ CREATE TABLE IF NOT EXISTS entries (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     path TEXT NOT NULL,
+    content_path TEXT,
     group_name TEXT,
+    dir TEXT,
     has_content_md INTEGER NOT NULL DEFAULT 1,
     labels TEXT,
     status TEXT,
@@ -88,7 +90,11 @@ pub struct StoredEntry {
     pub id: String,
     pub title: String,
     pub path: String,
+    pub content_path: String,
     pub group: Option<String>,
+    /// 条目真实磁盘归属的完整子路径（相对 KB 根）。`group` 只做展示
+    /// （扁平布局下是顶层目录）；所有拼路径的命令都必须用 `dir`。
+    pub dir: Option<String>,
     pub tags: Vec<String>,
     pub attachments: Vec<StoredAttachment>,
     pub relations: Vec<StoredRelation>,
@@ -131,6 +137,9 @@ impl Index {
             std::fs::create_dir_all(parent).ok();
         }
         let conn = Connection::open(path)?;
+        // rusqlite/SQLite 默认关闭外键约束；不开启的话 schema 里的
+        // ON DELETE CASCADE 全是装饰，删除条目会留下 tags/attachments/relations 孤儿。
+        conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.execute_batch(SCHEMA)?;
         Self::migrate_schema(&conn)?;
         Ok(Self {
@@ -146,6 +155,8 @@ impl Index {
     /// 所以显式 ALTER TABLE 一下。列已存在会被 SQLite 报错，我们吞掉。
     fn migrate_schema(conn: &Connection) -> rusqlite::Result<()> {
         let add_columns = [
+            "ALTER TABLE entries ADD COLUMN content_path TEXT",
+            "ALTER TABLE entries ADD COLUMN dir TEXT",
             "ALTER TABLE entries ADD COLUMN labels TEXT",
             "ALTER TABLE entries ADD COLUMN status TEXT",
             "ALTER TABLE entries ADD COLUMN aliases TEXT",
@@ -204,15 +215,25 @@ impl Index {
             .count() as i32;
 
         conn.execute(
-            "INSERT OR REPLACE INTO entries (id, title, path, group_name, has_content_md, \
+            "INSERT INTO entries (id, title, path, content_path, group_name, dir, has_content_md, \
              labels, status, aliases, source, created, updated, ignored_rules, \
              error_count, warning_count) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET \
+             title = excluded.title, path = excluded.path, content_path = excluded.content_path, \
+             group_name = excluded.group_name, dir = excluded.dir, \
+             has_content_md = excluded.has_content_md, \
+             labels = excluded.labels, status = excluded.status, aliases = excluded.aliases, \
+             source = excluded.source, created = excluded.created, updated = excluded.updated, \
+             ignored_rules = excluded.ignored_rules, error_count = excluded.error_count, \
+             warning_count = excluded.warning_count",
             params![
                 entry.id,
                 entry.title,
                 entry.path.to_string_lossy(),
+                entry.content_path.to_string_lossy(),
                 entry.group,
+                entry.dir,
                 entry.has_content_md as i32,
                 labels_json,
                 entry.status,
@@ -277,34 +298,37 @@ impl Index {
     pub fn get_all_entries(&self) -> rusqlite::Result<Vec<StoredEntry>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, title, path, group_name, has_content_md, \
+            "SELECT id, title, path, content_path, group_name, dir, has_content_md, \
                     labels, status, aliases, source, created, updated, ignored_rules, \
                     error_count, warning_count \
              FROM entries ORDER BY id",
         )?;
 
         let entries_iter = stmt.query_map([], |row| {
-            let labels_json: Option<String> = row.get(5)?;
-            let aliases_json: Option<String> = row.get(7)?;
-            let ignored_json: Option<String> = row.get(11)?;
+            let labels_json: Option<String> = row.get(7)?;
+            let aliases_json: Option<String> = row.get(9)?;
+            let ignored_json: Option<String> = row.get(13)?;
             Ok(StoredEntry {
                 id: row.get(0)?,
                 title: row.get(1)?,
                 path: row.get(2)?,
-                group: row.get(3)?,
+                content_path: row.get::<_, Option<String>>(3)?
+                    .unwrap_or_else(|| row.get::<_, String>(2).unwrap_or_default()),
+                group: row.get(4)?,
+                dir: row.get(5)?,
                 tags: vec![],
                 attachments: vec![],
                 relations: vec![],
-                has_content_md: row.get::<_, i32>(4)? != 0,
+                has_content_md: row.get::<_, i32>(6)? != 0,
                 labels: parse_json_vec(&labels_json),
-                status: row.get(6)?,
+                status: row.get(8)?,
                 aliases: parse_json_vec(&aliases_json),
-                source: row.get(8)?,
-                created: row.get(9)?,
-                updated: row.get(10)?,
+                source: row.get(10)?,
+                created: row.get(11)?,
+                updated: row.get(12)?,
                 ignored_rules: parse_json_vec(&ignored_json),
-                error_count: row.get::<_, i32>(12)?.max(0) as u32,
-                warning_count: row.get::<_, i32>(13)?.max(0) as u32,
+                error_count: row.get::<_, i32>(14)?.max(0) as u32,
+                warning_count: row.get::<_, i32>(15)?.max(0) as u32,
             })
         })?;
 
@@ -325,6 +349,21 @@ impl Index {
     pub fn get_entry_path(&self, id: &str) -> rusqlite::Result<Option<PathBuf>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT path FROM entries WHERE id = ?")?;
+        let mut rows = stmt.query_map(params![id], |row| row.get::<_, String>(0))?;
+        match rows.next() {
+            Some(Ok(p)) => Ok(Some(PathBuf::from(p))),
+            Some(Err(e)) => Err(e),
+            None => Ok(None),
+        }
+    }
+
+    /// 返回条目的正文文件路径。目录格式的 entry 存的是目录，
+    /// 真正可读写的是其 `content.md`；扁平格式两者相同。
+    pub fn get_entry_content_path(&self, id: &str) -> rusqlite::Result<Option<PathBuf>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT COALESCE(NULLIF(content_path, ''), path) FROM entries WHERE id = ?",
+        )?;
         let mut rows = stmt.query_map(params![id], |row| row.get::<_, String>(0))?;
         match rows.next() {
             Some(Ok(p)) => Ok(Some(PathBuf::from(p))),
@@ -449,15 +488,19 @@ impl Index {
         // Build lookup tables from current DB state.
         let (id_set, by_stem, by_rel_path) = {
             let conn = self.conn.lock().unwrap();
-            let mut stmt = conn.prepare("SELECT id, path FROM entries")?;
+            let mut stmt = conn.prepare("SELECT id, path, content_path FROM entries")?;
             let rows = stmt.query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
             })?;
             let mut id_set: HashSet<String> = HashSet::new();
             let mut by_stem: HashMap<String, String> = HashMap::new();
             let mut by_rel_path: HashMap<String, String> = HashMap::new();
             for row in rows {
-                let (id, p) = row?;
+                let (id, p, content_path) = row?;
                 id_set.insert(id.clone());
                 let pp = std::path::Path::new(&p);
                 if let Some(stem) = pp.file_stem() {
@@ -471,16 +514,37 @@ impl Index {
                     let s2 = rel.with_extension("").to_string_lossy().replace('\\', "/");
                     by_rel_path.entry(s2).or_insert_with(|| id.clone());
                 }
+                if let Some(cp) = content_path {
+                    let cp = std::path::Path::new(&cp);
+                    if let Ok(rel) = cp.strip_prefix(kb_root) {
+                        let s = rel.to_string_lossy().replace('\\', "/");
+                        by_rel_path.entry(s).or_insert_with(|| id.clone());
+                    }
+                }
             }
             (id_set, by_stem, by_rel_path)
         };
+
+        // 先插入显式关系，再补普通链接；同一 (from, to) 已有显式类型时跳过 reference，
+        // 否则 create_entry_simple 的增量路径会与 rebuild 的结果不一致。
+        let mut typed_targets: HashSet<String> = HashSet::new();
+        for rel in &entry.typed_relations {
+            if let Some(target_id) =
+                resolve_target(&rel.target, &id_set, &by_stem, &by_rel_path)
+            {
+                if target_id != entry.id {
+                    typed_targets.insert(target_id.clone());
+                    self.add_relation(&entry.id, &target_id, &rel.relation_type, None)?;
+                }
+            }
+        }
 
         // [[xxx]] 双链
         for target in &entry.linked_targets {
             if let Some(target_id) =
                 resolve_target(target, &id_set, &by_stem, &by_rel_path)
             {
-                if target_id != entry.id {
+                if target_id != entry.id && !typed_targets.contains(&target_id) {
                     self.add_relation(&entry.id, &target_id, "reference", None)?;
                 }
             }
@@ -498,7 +562,7 @@ impl Index {
             if let Some(target_id) =
                 resolve_target(cleaned, &id_set, &by_stem, &by_rel_path)
             {
-                if target_id != entry.id {
+                if target_id != entry.id && !typed_targets.contains(&target_id) {
                     self.add_relation(&entry.id, &target_id, "reference", None)?;
                 }
             }
@@ -552,28 +616,12 @@ impl Index {
         use crate::parser::is_external_url;
         use std::collections::{HashMap, HashSet};
 
-        // 先清空表（短暂持锁）
-        {
-            let conn = self.conn.lock().unwrap();
-            conn.execute("DELETE FROM entries", [])?;
-            conn.execute("DELETE FROM relations", [])?;
-        }
-
-        // Pass 1: 收集并插入 entries
-        let mut entries: Vec<RawEntry> = Vec::new();
-        for file in find_md_files(kb_root) {
-            // KB 根直接下的 .md 也作为 entry（group = null），但 README 仍跳过
-            // （用户可在 KB 根放 README.md 不希望被索引）
-            if file.parent() == Some(kb_root) {
-                let fname = file
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                if fname.eq_ignore_ascii_case("readme.md") {
-                    continue;
-                }
-            }
-            entries.push(read_md_file(&file, kb_root));
+        // 先完整扫描、解析、校验，再一次性写入 DB。
+        // 这样 get_entries 不会看到「已清空、未插入」的中间态。
+        let (paths, layout) = scan_entry_paths(kb_root);
+        let mut entries: Vec<RawEntry> = Vec::with_capacity(paths.len());
+        for path in paths {
+            entries.push(read_entry_path(&path, kb_root));
         }
 
         // Dedup by derived id. Two distinct .md files can map to the same
@@ -627,6 +675,10 @@ impl Index {
             by_rel_path
                 .entry(rel_path)
                 .or_insert_with(|| e.id.clone());
+            if let Ok(cp_rel) = e.content_path.strip_prefix(kb_root) {
+                let cp_rel = cp_rel.to_string_lossy().replace('\\', "/");
+                by_rel_path.entry(cp_rel).or_insert_with(|| e.id.clone());
+            }
         }
 
         // 为每个 entry 跑校验规则，让 RawEntry.validation 有数据。
@@ -634,37 +686,43 @@ impl Index {
         let entries: Vec<RawEntry> = entries
             .into_iter()
             .map(|mut e| {
-                e.validation = crate::validator::rules::check_all(&e, kb_root, &id_set);
+                e.validation = crate::validator::rules::check_all(&e, kb_root, &id_set, layout);
                 e
             })
             .collect();
 
-        // Pass 1: collect + insert entries in a single transaction. Pre-fix,
-// `for e in &entries { self.upsert_entry(e)?; }` acquired the mutex per
-// entry and ran each INSERT outside a transaction — 1000 entries × ~5
-// round-trips = 5000 separate lock-and-execute cycles. Post-fix: one
-// mutex acquisition, one transaction wrapping all upserts.
-        {
-            let conn = self.conn.lock().unwrap();
-            let tx = conn.unchecked_transaction()?;
-            for e in &entries {
-                Self::upsert_entry_in_tx(&tx, e)?;
+        // Pass 2: 收集显式关系（@relation: type [[id]]）与普通链接。
+        // 显式关系优先：同一 (from, to) 若已有类型声明，就不再补 reference，
+        // 否则 rebuild 后会出现两条边，且类型会退化成 reference。
+        let mut typed_relations: Vec<(String, String, String)> = Vec::new();
+        let mut typed_pairs: HashSet<(String, String)> = HashSet::new();
+        for entry in &entries {
+            for rel in &entry.typed_relations {
+                if let Some(target_id) =
+                    resolve_target(&rel.target, &id_set, &by_stem, &by_rel_path)
+                {
+                    if target_id != entry.id {
+                        typed_pairs.insert((entry.id.clone(), target_id.clone()));
+                        typed_relations.push((
+                            entry.id.clone(),
+                            target_id,
+                            rel.relation_type.clone(),
+                        ));
+                    }
+                }
             }
-            tx.commit()?;
         }
 
-        // Pass 2: 解析链接并建立 reference 关系。
-        // 先收集所有候选关系（无 SQL），再在一个事务里批量 INSERT。
-        // 单次 Mutex 获取 + 单次 COMMIT，避免 N+M 次单独的 lock-and-insert。
-        let mut relations: Vec<(String, String)> = Vec::new();
+        let mut references: Vec<(String, String)> = Vec::new();
         for entry in &entries {
             // [[xxx]] 双链
             for target in &entry.linked_targets {
                 if let Some(target_id) =
                     resolve_target(target, &id_set, &by_stem, &by_rel_path)
                 {
-                    if target_id != entry.id {
-                        relations.push((entry.id.clone(), target_id));
+                    let pair = (entry.id.clone(), target_id);
+                    if pair.1 != entry.id && !typed_pairs.contains(&pair) {
+                        references.push(pair);
                     }
                 }
             }
@@ -682,17 +740,32 @@ impl Index {
                 if let Some(target_id) =
                     resolve_target(cleaned, &id_set, &by_stem, &by_rel_path)
                 {
-                    if target_id != entry.id {
-                        relations.push((entry.id.clone(), target_id));
+                    let pair = (entry.id.clone(), target_id);
+                    if pair.1 != entry.id && !typed_pairs.contains(&pair) {
+                        references.push(pair);
                     }
                 }
             }
         }
 
-        if !relations.is_empty() {
+        // 清表 + 全量插入放在同一个事务里：读侧只会看到旧快照或新快照，
+        // 不会看到「已清空、未插入」的中间态。
+        {
             let conn = self.conn.lock().unwrap();
             let tx = conn.unchecked_transaction()?;
-            for (from_id, to_id) in &relations {
+            tx.execute("DELETE FROM relations", [])?;
+            tx.execute("DELETE FROM entries", [])?;
+            for e in &entries {
+                Self::upsert_entry_in_tx(&tx, e)?;
+            }
+            for (from_id, to_id, relation_type) in &typed_relations {
+                tx.execute(
+                    "INSERT OR IGNORE INTO relations (from_id, to_id, relation_type, note) \
+                     VALUES (?, ?, ?, NULL)",
+                    params![from_id, to_id, relation_type],
+                )?;
+            }
+            for (from_id, to_id) in &references {
                 tx.execute(
                     "INSERT OR IGNORE INTO relations (from_id, to_id, relation_type, note) \
                      VALUES (?, ?, 'reference', NULL)",
@@ -774,6 +847,7 @@ fn is_attachment_url(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::entry::read_md_file;
     use crate::entry::RawAttachment;
     use std::fs;
     use tempfile::tempdir;
@@ -784,6 +858,7 @@ mod tests {
             title: title.to_string(),
             tags: vec!["tag1".to_string(), "tag2".to_string()],
             group: Some("group-a".to_string()),
+            dir: Some("group-a".to_string()),
             path: path.to_path_buf(),
             content_path: path.join("content.md"),
             attachments: vec![RawAttachment {
@@ -793,6 +868,7 @@ mod tests {
             }],
             linked_targets: vec![],
             markdown_links: vec![],
+            typed_relations: vec![],
             yaml: None,
             has_content_md: true,
             labels: vec![],
@@ -1784,5 +1860,145 @@ mod tests {
 
         let result = index.rename_entry_id("missing", "newid");
         assert!(result.is_err(), "unknown old id must fail");
+    }
+
+    // ---------- 统一口径 / relationType / 外键 ----------
+
+    /// 扁平 KB 的合法条目不应再出现 E2/E4/E6 误报。
+    #[test]
+    fn rebuild_flat_entry_has_no_systematic_false_positive_errors() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("note.md"),
+            "# Note\n\n<!-- @synapse-tags: type:concept -->\n",
+        )
+        .unwrap();
+
+        let index = Index::open(&dir.path().join("db.sqlite")).unwrap();
+        index.rebuild(root).unwrap();
+
+        let entries = index.get_all_entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "note");
+        assert_eq!(entries[0].tags, vec!["type:concept"]);
+        assert_eq!(
+            entries[0].error_count, 0,
+            "flat entry must not be flagged by E2/E4/E6: {:?}",
+            entries[0]
+        );
+    }
+
+    /// 扁平布局嵌套目录：落库的 `dir` 必须是真实子路径，`group` 只是
+    /// 顶层展示分组。命令层拼接新路径时读 `dir`，否则会把嵌套压平。
+    #[test]
+    fn rebuild_flat_nested_entry_keeps_physical_dir_and_top_level_group() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("topic").join("sub")).unwrap();
+        fs::write(
+            root.join("topic").join("sub").join("note.md"),
+            "# Note\n\n<!-- @synapse-tags: type:concept -->\n",
+        )
+        .unwrap();
+
+        let index = Index::open(&dir.path().join("db.sqlite")).unwrap();
+        index.rebuild(root).unwrap();
+
+        let entries = index.get_all_entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "topic-sub-note");
+        assert_eq!(entries[0].group.as_deref(), Some("topic"));
+        assert_eq!(entries[0].dir.as_deref(), Some("topic/sub"));
+    }
+
+    /// 目录格式的 entry 也要走同一套解析：tags/YAML/附件/正文路径都必须可用。
+    #[test]
+    fn rebuild_directory_entry_uses_unified_parser() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("topic")).unwrap();
+        fs::write(
+            root.join("topic").join("content.md"),
+            r##"<!-- @synapse-id: topic -->
+<!-- @synapse-title: Topic -->
+<!-- @synapse-tags: type:concept -->
+
+---
+color: "#fff"
+---
+
+![[./img.png|caption]]
+"##,
+        )
+        .unwrap();
+
+        let index = Index::open(&dir.path().join("db.sqlite")).unwrap();
+        index.rebuild(root).unwrap();
+
+        let entries = index.get_all_entries().unwrap();
+        assert_eq!(entries.len(), 1, "content.md 不能单独再生成一个 entry");
+        let e = &entries[0];
+        assert_eq!(e.id, "topic");
+        assert_eq!(e.tags, vec!["type:concept"]);
+        assert_eq!(e.attachments.len(), 1);
+        assert_eq!(e.error_count, 0);
+        assert!(e.content_path.ends_with("topic/content.md"));
+    }
+
+    /// relationType 必须由 Markdown 中的 `@relation:` 行恢复；
+    /// 重复 rebuild（watcher 每次文件变化都会触发）不能退化成 reference。
+    #[test]
+    fn rebuild_preserves_typed_relations_across_multiple_runs() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("a.md"), "# A\n\n@relation: derived [[b]]\n").unwrap();
+        fs::write(root.join("b.md"), "# B\n").unwrap();
+
+        let index = Index::open(&dir.path().join("db.sqlite")).unwrap();
+        for _ in 0..2 {
+            index.rebuild(root).unwrap();
+            let conn = index.conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT from_id, to_id, relation_type FROM relations")
+                .unwrap();
+            let edges: Vec<(String, String, String)> = stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap();
+            assert_eq!(
+                edges,
+                vec![("a".to_string(), "b".to_string(), "derived".to_string())],
+                "typed relation must survive rebuild and must not duplicate as reference"
+            );
+        }
+    }
+
+    /// 外键必须真正开启，否则 schema 里的 CASCADE 只是注释。
+    #[test]
+    fn foreign_keys_cascade_on_entry_delete() {
+        let dir = tempdir().unwrap();
+        let index = Index::open(&dir.path().join("db.sqlite")).unwrap();
+        index.upsert_entry(&make_entry("a", "A", dir.path())).unwrap();
+        index.upsert_entry(&make_entry("b", "B", dir.path())).unwrap();
+        index.add_relation("a", "b", "reference", None).unwrap();
+
+        {
+            let conn = index.conn.lock().unwrap();
+            let fk: i64 = conn
+                .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(fk, 1, "foreign_keys must be ON");
+            conn.execute("DELETE FROM entries WHERE id = 'a'", []).unwrap();
+            let tags: i64 = conn
+                .query_row("SELECT COUNT(*) FROM tags WHERE entry_id = 'a'", [], |r| r.get(0))
+                .unwrap();
+            let rels: i64 = conn
+                .query_row("SELECT COUNT(*) FROM relations WHERE from_id = 'a'", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(tags, 0, "tags must cascade with the entry");
+            assert_eq!(rels, 0, "relations must cascade with the entry");
+        }
     }
 }

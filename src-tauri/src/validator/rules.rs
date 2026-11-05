@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::entry::RawEntry;
+use crate::scanner::KbLayout;
 use crate::validator::{Severity, ValidationIssue};
 
 /// 跑所有 E/W 规则，返回发现的问题。
@@ -11,12 +12,13 @@ pub fn check_all(
     entry: &RawEntry,
     kb_root: &Path,
     all_ids: &HashSet<String>,
+    layout: KbLayout,
 ) -> Vec<ValidationIssue> {
     let mut issues = vec![];
     issues.extend(check_required(entry, kb_root, all_ids));
     issues.extend(check_id_matches_path(entry, kb_root, all_ids));
     issues.extend(check_directory_depth(entry, kb_root, all_ids));
-    issues.extend(check_root_md_files(entry, kb_root, all_ids));
+    issues.extend(check_root_md_files(entry, kb_root, all_ids, layout));
     issues.extend(check_reserved_subdir_names(entry, kb_root, all_ids));
     issues.extend(check_system_labels_written_by_user(entry, kb_root, all_ids));
     issues.extend(check_yaml_parse(entry, kb_root, all_ids));
@@ -78,21 +80,15 @@ pub fn check_id_matches_path(
     let Ok(rel) = entry.path.strip_prefix(kb_root) else {
         return vec![];
     };
-    let Some(file_name) = entry.path.file_name() else {
-        return vec![];
-    };
-    let file_name_str = file_name.to_string_lossy();
-    let parent = rel.parent().map(|p| p.to_string_lossy().replace('\\', "/"));
-    // 跳过保留前缀（_inbox, _archive, _drafts 等），
-    // 这些目录只是分组容器，不参与 id 派生。
-    let parent_normalized = parent
-        .as_deref()
-        .filter(|p| !p.is_empty() && *p != ".")
-        .map(strip_reserved_prefix)
-        .filter(|s| !s.is_empty());
-    let id_from_path = match parent_normalized.as_deref() {
-        Some(p) => format!("{}-{}", p.replace('/', "-"), file_name_str),
-        None => file_name_str.to_string(),
+    // 目录格式：id 默认等于 entry 目录名（或 @synapse-id 覆盖）。
+    // 扁平格式：id 由相对路径去扩展名、去保留前缀后以 `-` 连接。
+    let id_from_path = if entry.path.is_dir() {
+        match entry.path.file_name() {
+            Some(name) => name.to_string_lossy().to_string(),
+            None => return vec![],
+        }
+    } else {
+        crate::entry::flat_id_from_rel(rel)
     };
     if entry.id != id_from_path && !entry.id.is_empty() {
         return vec![ValidationIssue {
@@ -111,6 +107,7 @@ pub fn check_id_matches_path(
 }
 
 /// 去掉路径开头所有保留前缀（`_` 开头），让 id 只反映用户可见的部分。
+#[allow(dead_code)]
 fn strip_reserved_prefix(path: &str) -> String {
     let parts: Vec<&str> = path.split('/').collect();
     let kept: Vec<&str> = parts
@@ -147,7 +144,12 @@ pub fn check_root_md_files(
     entry: &RawEntry,
     kb_root: &Path,
     _all_ids: &HashSet<String>,
+    layout: KbLayout,
 ) -> Vec<ValidationIssue> {
+    // 扁平格式的根级 .md 是合法条目；E6 只适用于目录格式的 KB。
+    if layout == KbLayout::Flat {
+        return vec![];
+    }
     let Ok(rel) = entry.path.strip_prefix(kb_root) else {
         return vec![];
     };
@@ -329,6 +331,11 @@ pub fn check_legacy_group_field(
     _kb_root: &Path,
     _all_ids: &HashSet<String>,
 ) -> Vec<ValidationIssue> {
+    // 扁平格式的 group 由父目录派生，不代表用户写了 @synapse-group；
+    // 只有目录格式（group 来自 metadata）才可能是遗留字段。
+    if entry.path.is_file() {
+        return vec![];
+    }
     if let Some(value) = &entry.group {
         return vec![ValidationIssue {
             entry_id: entry.id.clone(),
@@ -357,11 +364,13 @@ mod tests {
             title: title.to_string(),
             tags,
             group: None,
+            dir: None,
             path: PathBuf::from(format!("/kb/{id}/content.md")),
             content_path: PathBuf::from(format!("/kb/{id}/content.md")),
             attachments: vec![],
             linked_targets: vec![],
             markdown_links: vec![],
+            typed_relations: vec![],
             yaml: None,
             has_content_md: true,
             labels: vec![],
@@ -429,6 +438,28 @@ mod tests {
     }
 
     #[test]
+    fn e2_flat_path_id_matches_without_false_positive() {
+        let mut e = make_entry("frontend-react", "Foo", vec!["type:concept".into()]);
+        e.path = PathBuf::from("/kb/frontend/react.md");
+        e.content_path = e.path.clone();
+        let issues = check_id_matches_path(&e, std::path::Path::new("/kb"), &Default::default());
+        assert!(
+            !issues.iter().any(|i| i.rule_id == "E2"),
+            "flat id 由相对路径派生，正确的 id 不应报 E2: {:?}",
+            issues
+        );
+    }
+
+    #[test]
+    fn e2_dir_path_id_matches_without_false_positive() {
+        let mut e = make_entry("foo", "Foo", vec!["type:concept".into()]);
+        e.path = PathBuf::from("/kb/foo");
+        e.content_path = e.path.join("content.md");
+        let issues = check_id_matches_path(&e, std::path::Path::new("/kb"), &Default::default());
+        assert!(!issues.iter().any(|i| i.rule_id == "E2"));
+    }
+
+    #[test]
     fn e5_deep_path_triggers() {
         let mut e = make_entry("foo", "Foo", vec!["type:concept".into()]);
         // depth > 3: /kb/a/b/c/d/foo/content.md = 6 components
@@ -443,8 +474,27 @@ mod tests {
         let mut e = make_entry("foo", "Foo", vec!["type:concept".into()]);
         e.path = PathBuf::from("/kb/foo.md");  // depth = 2 (kb + foo.md)
         e.content_path = e.path.clone();
-        let issues = check_root_md_files(&e, std::path::Path::new("/kb"), &Default::default());
+        let issues = check_root_md_files(
+            &e,
+            std::path::Path::new("/kb"),
+            &Default::default(),
+            KbLayout::Directory,
+        );
         assert!(issues.iter().any(|i| i.rule_id == "E6"));
+    }
+
+    #[test]
+    fn e6_root_md_not_flagged_in_flat_layout() {
+        let mut e = make_entry("foo", "Foo", vec!["type:concept".into()]);
+        e.path = PathBuf::from("/kb/foo.md");
+        e.content_path = e.path.clone();
+        let issues = check_root_md_files(
+            &e,
+            std::path::Path::new("/kb"),
+            &Default::default(),
+            KbLayout::Flat,
+        );
+        assert!(!issues.iter().any(|i| i.rule_id == "E6"));
     }
 
     #[test]

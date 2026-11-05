@@ -196,7 +196,7 @@ pub async fn get_entry_content(
 ) -> AppResult<Option<String>> {
     let path = {
         let idx = state.index.read().await;
-        idx.get_entry_path(&id)?
+        idx.get_entry_content_path(&id)?
     };
     let Some(path) = path else {
         return Ok(None);
@@ -220,12 +220,12 @@ pub async fn create_relation(
     let (from_path, to_path) = {
         let idx = state.index.read().await;
         let f = idx
-            .get_entry_path(&from_id)?
+            .get_entry_content_path(&from_id)?
             .ok_or_else(|| AppError::EntryNotFound {
                 id: from_id.clone(),
             })?;
         let t = idx
-            .get_entry_path(&to_id)?
+            .get_entry_content_path(&to_id)?
             .ok_or_else(|| AppError::EntryNotFound {
                 id: to_id.clone(),
             })?;
@@ -256,7 +256,7 @@ pub async fn delete_relation(
     // before dropping the row so the deletion survives a rebuild.
     let from_path = {
         let idx = state.index.read().await;
-        idx.get_entry_path(&from_id)?
+        idx.get_entry_content_path(&from_id)?
             .ok_or_else(|| AppError::EntryNotFound {
                 id: from_id.clone(),
             })?
@@ -326,10 +326,17 @@ pub async fn delete_entry(
             .ok_or_else(|| AppError::EntryNotFound { id: id.clone() })?
     };
 
-    std::fs::remove_file(&path).map_err(|e| AppError::io(
-        format!("delete_entry: remove {}", path.display()),
-        e,
-    ))?;
+    if path.is_dir() {
+        std::fs::remove_dir_all(&path).map_err(|e| AppError::io(
+            format!("delete_entry: remove dir {}", path.display()),
+            e,
+        ))?;
+    } else {
+        std::fs::remove_file(&path).map_err(|e| AppError::io(
+            format!("delete_entry: remove {}", path.display()),
+            e,
+        ))?;
+    }
 
     let idx = state.index.read().await;
     idx.remove_entry(&id)?;
@@ -417,7 +424,7 @@ pub async fn create_entry_simple(
     if let Some(from_id) = link_from_entry.as_deref() {
         let from_path = {
             let idx = state.index.read().await;
-            idx.get_entry_path(from_id)?
+            idx.get_entry_content_path(from_id)?
                 .ok_or_else(|| AppError::EntryNotFound {
                     id: from_id.to_string(),
                 })?
@@ -432,7 +439,7 @@ pub async fn create_entry_simple(
     if let Some(to_id) = link_to_entry.as_deref() {
         let to_path = {
             let idx = state.index.read().await;
-            idx.get_entry_path(to_id)?
+            idx.get_entry_content_path(to_id)?
                 .ok_or_else(|| AppError::EntryNotFound {
                     id: to_id.to_string(),
                 })?
@@ -492,7 +499,7 @@ pub async fn create_entry_from_reference(
 
     let from_path = {
         let idx = state.index.read().await;
-        idx.get_entry_path(&from_id)?
+        idx.get_entry_content_path(&from_id)?
     }
     .ok_or_else(|| AppError::EntryNotFound {
                 id: from_id.clone(),
@@ -563,6 +570,7 @@ pub async fn validate_entry(
         &entry,
         &entry_dir,
         &all_ids,
+        crate::scanner::KbLayout::Directory,
     ))
 }
 
@@ -821,7 +829,7 @@ pub async fn apply_fix(
     // 1) Look up the on-disk file path for this entry.
     let md_path = {
         let idx = state.index.read().await;
-        idx.get_entry_path(&entry_id)?
+        idx.get_entry_content_path(&entry_id)?
             .ok_or_else(|| AppError::EntryNotFound {
                 id: entry_id.clone(),
             })?
@@ -849,11 +857,13 @@ pub async fn apply_fix(
         title: String::new(),
         tags: vec![],
         group: None,
+        dir: None,
         path: entry_dir.clone(),
         content_path: md_path.clone(),
         attachments: vec![],
         linked_targets: vec![],
         markdown_links: vec![],
+        typed_relations: vec![],
         yaml: None,
         has_content_md: true,
         labels: vec![],
@@ -1017,7 +1027,7 @@ pub async fn update_entry_metadata_impl(
     // 2) Resolve the entry's on-disk path.
     let path = {
         let idx = state.index.read().await;
-        idx.get_entry_path(&id)?
+        idx.get_entry_content_path(&id)?
             .ok_or_else(|| AppError::EntryNotFound { id: id.clone() })?
     };
 
@@ -1914,6 +1924,45 @@ End of note.
         // Returned entry matches the on-disk id (title comes from the
         // first `# heading` in flat-md format, which is still "Note").
         assert_eq!(result.id, "note");
+    }
+
+    /// 统一解析回归：写入 tags/labels 后，命令内部的 rebuild 必须能读回，
+    /// 否则接口会把前端的乐观更新覆盖为空（旧实现的扁平解析器丢弃 tags）。
+    #[tokio::test]
+    async fn update_metadata_persists_tags_and_labels() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb_root = dir.path().to_path_buf();
+        std::fs::write(
+            kb_root.join("note.md"),
+            "<!-- @synapse-id: note -->\n<!-- @synapse-title: Note -->\n# Note\n",
+        )
+        .unwrap();
+        let state = state_with_current_kb(Some(&kb_root));
+        {
+            let idx = state.index.read().await;
+            idx.rebuild(&kb_root).unwrap();
+        }
+
+        let result = update_entry_metadata_impl(
+            &state,
+            "note".to_string(),
+            MetadataChanges {
+                title: None,
+                tags: Some(vec!["type:concept".to_string(), "topic:rust".to_string()]),
+                labels: Some(vec!["important".to_string()]),
+                status: None,
+            },
+        )
+        .await
+        .expect("update should succeed");
+
+        let mut tags = result.tags.clone();
+        tags.sort();
+        assert_eq!(tags, vec!["topic:rust", "type:concept"]);
+        assert_eq!(result.labels, vec!["important"]);
+        let on_disk = std::fs::read_to_string(kb_root.join("note.md")).unwrap();
+        assert!(on_disk.contains("@synapse-tags: type:concept, topic:rust"));
+        assert!(on_disk.contains("@synapse-labels: important"));
     }
 
     // ---------- precheck_rename / count_incoming_refs ----------

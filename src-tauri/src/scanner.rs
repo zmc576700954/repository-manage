@@ -54,6 +54,50 @@ pub fn find_md_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// KB 的布局形态：决定 id 派生与 E6 等规则的适用方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KbLayout {
+    /// 每个 `.md` 文件就是一个 entry。
+    Flat,
+    /// 每个含 `content.md` 的目录是一个 entry。
+    Directory,
+}
+
+/// 统一扫描入口：索引与校验都必须使用它。
+/// 返回「目录 entry」与「扁平 .md entry」的完整路径列表，以及布局形态。
+/// - 含 `content.md` 的目录算一个 entry，其内部的 `.md` 不再单独成为 entry
+/// - 其余 `.md` 文件按扁平 entry 处理
+/// - KB 根目录的 README.md 跳过（项目说明，不是条目）
+pub fn scan_entry_paths(root: &Path) -> (Vec<PathBuf>, KbLayout) {
+    let entry_dirs = find_entry_dirs(root);
+    let dir_set: HashSet<PathBuf> = entry_dirs.iter().cloned().collect();
+
+    let mut paths = entry_dirs;
+    for file in find_md_files(root) {
+        if file.ancestors().skip(1).any(|a| dir_set.contains(a)) {
+            continue;
+        }
+        if file.parent() == Some(root)
+            && file
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.eq_ignore_ascii_case("README.md"))
+                .unwrap_or(false)
+        {
+            continue;
+        }
+        paths.push(file);
+    }
+
+    paths.sort();
+    let layout = if dir_set.is_empty() {
+        KbLayout::Flat
+    } else {
+        KbLayout::Directory
+    };
+    (paths, layout)
+}
+
 /// 路径是否为迁移产物（备份 / 日志），需要从 KB 扫描中排除。
 fn is_artifact(path: &Path) -> bool {
     for ancestor in path.ancestors() {
@@ -129,14 +173,32 @@ mod tests {
     }
 
     #[test]
-    fn extracts_entry_id() {
+    fn scan_paths_handles_flat_kb_and_skips_readme() {
         let dir = tempdir().unwrap();
         let root = dir.path();
+        fs::write(root.join("note.md"), "# Note\n").unwrap();
+        fs::write(root.join("README.md"), "# KB\n").unwrap();
 
-        let entry_path = root.join("react-hooks");
-        fs::create_dir(&entry_path).unwrap();
+        let (paths, layout) = scan_entry_paths(root);
+        assert_eq!(layout, KbLayout::Flat);
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].ends_with("note.md"));
+    }
 
-        let id = entry_id_from_path(root, &entry_path).unwrap();
-        assert_eq!(id, "react-hooks");
+    #[test]
+    fn scan_paths_mixed_layout_counts_dir_once() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir(root.join("topic-a")).unwrap();
+        fs::write(root.join("topic-a").join("content.md"), "# A\n").unwrap();
+        fs::write(root.join("flat.md"), "# Flat\n").unwrap();
+        fs::write(root.join("README.md"), "# KB\n").unwrap();
+
+        let (paths, layout) = scan_entry_paths(root);
+        assert_eq!(layout, KbLayout::Directory);
+        assert_eq!(paths.len(), 2, "content.md 不应再作为独立 entry");
+        assert!(paths.iter().any(|p| p.ends_with("topic-a")));
+        assert!(paths.iter().any(|p| p.ends_with("flat.md")));
+        assert!(!paths.iter().any(|p| p.ends_with("content.md")));
     }
 }

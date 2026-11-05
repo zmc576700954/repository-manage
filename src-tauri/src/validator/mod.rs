@@ -11,6 +11,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::entry::RawEntry;
+use crate::scanner::KbLayout;
 
 use serde::Serialize;
 
@@ -69,7 +70,7 @@ pub fn validate_kb(kb_root: &Path) -> ValidationReport {
         issues: vec![],
     };
 
-    let entries = match scan_entries(kb_root) {
+    let (entries, layout) = match scan_entries(kb_root) {
         Ok(e) => e,
         Err(_) => return report,
     };
@@ -77,7 +78,7 @@ pub fn validate_kb(kb_root: &Path) -> ValidationReport {
     let all_ids: HashSet<String> = entries.iter().map(|e| e.id.clone()).collect();
 
     for entry in &entries {
-        let issues = rules::check_all(entry, kb_root, &all_ids);
+        let issues = rules::check_all(entry, kb_root, &all_ids, layout);
         report.issues.extend(issues);
     }
 
@@ -86,21 +87,14 @@ pub fn validate_kb(kb_root: &Path) -> ValidationReport {
     report
 }
 
-/// 扫描 KB 根目录，返回所有 RawEntry。
-/// 优先尝试 entry 目录模式（每个子目录含 content.md），
-/// 如果没有找到，回退到平铺模式（每个 .md 文件就是一个 entry）。
-fn scan_entries(kb_root: &Path) -> std::io::Result<Vec<RawEntry>> {
-    let entry_dirs = crate::scanner::find_entry_dirs(kb_root);
-    if !entry_dirs.is_empty() {
-        return Ok(entry_dirs
-            .into_iter()
-            .map(|dir| crate::entry::read_entry(&dir))
-            .collect());
-    }
-
-    let md_files = crate::scanner::find_md_files(kb_root);
-    Ok(md_files
+/// 扫描 KB 根目录，返回所有 RawEntry 与布局形态。
+/// 与索引共用 `scanner::scan_entry_paths` + `entry::read_entry_path`，
+/// 保证 id / tags / YAML / 附件的解析口径完全一致。
+fn scan_entries(kb_root: &Path) -> std::io::Result<(Vec<RawEntry>, KbLayout)> {
+    let (paths, layout) = crate::scanner::scan_entry_paths(kb_root);
+    let entries = paths
         .into_iter()
-        .map(|file| crate::entry::read_md_file(&file, kb_root))
-        .collect())
+        .map(|path| crate::entry::read_entry_path(&path, kb_root))
+        .collect();
+    Ok((entries, layout))
 }
