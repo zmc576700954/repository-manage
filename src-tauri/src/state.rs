@@ -48,4 +48,10 @@ pub struct AppState {
     /// Held here so `load_active_kb` can clone it when constructing a new
     /// debouncer for a different KB root.
     pub watch_tx: Arc<std::sync::Mutex<Option<mpsc::Sender<()>>>>,
+    /// 启动闸门：启动时的全量 rebuild 持有写锁，首屏读命令（`get_entries`）
+    /// 持读锁。这样 `get_entries` 不会在 rebuild 进行到一半时读到空表或
+    /// 半张表，从而避免“打开应用先看到空图谱、随后自己跳出来”的竞态。
+    /// 启动 rebuild 结束（含无活动 KB / 路径不存在的提前返回）后写锁释放，
+    /// 之后的读命令恢复为无等待。
+    pub startup_gate: Arc<RwLock<()>>,
 }

@@ -82,6 +82,7 @@ pub fn run() {
         write_lock: Arc::new(Mutex::new(())),
         watcher: Arc::new(std::sync::Mutex::new(initial_watcher)),
         watch_tx: Arc::new(std::sync::Mutex::new(Some(watch_tx))),
+        startup_gate: Arc::new(RwLock::new(())),
     };
 
     // Spawn the rebuild loop on a dedicated thread + tokio runtime so it
@@ -275,6 +276,10 @@ fn run_watch_loop(rx: std::sync::mpsc::Receiver<()>, state: AppState) {
 async fn run_startup_rebuild(state: &AppState) {
     use std::path::PathBuf;
 
+    // 启动闸门：在整段 rebuild（含校验）期间持有写锁，让首屏 `get_entries`
+    // 的读锁排队，避免读到空表/半张表。提前返回时 guard 随作用域释放。
+    let _gate = state.startup_gate.write().await;
+
     let kb_path: Option<PathBuf> = {
         let cur = state.current_kb.read().await;
         cur.as_ref().map(|kb| PathBuf::from(&kb.path))
@@ -420,6 +425,7 @@ mod tests {
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
             watcher: Arc::new(std::sync::Mutex::new(None)),
             watch_tx: Arc::new(std::sync::Mutex::new(None)),
+            startup_gate: Arc::new(tokio::sync::RwLock::new(())),
         }
     }
 
@@ -483,4 +489,29 @@ mod tests {
         let post = state.index.read().await.entry_count().unwrap();
         assert_eq!(post, 0, "missing KB path must not crash the helper");
     }
+
+    /// 首屏 `get_entries` 的读锁必须被启动 rebuild 的写锁挡住，否则前端
+    /// 会在 rebuild 尚未写入时读到空表（空图谱之后再自己跳出来）。
+    #[tokio::test]
+    async fn startup_gate_blocks_reader_until_rebuild_releases_write() {
+        let kb_dir = tempfile::tempdir().unwrap();
+        let root = kb_dir.path();
+        std::fs::write(root.join("a.md"), "# A\n").unwrap();
+        let state = make_test_state(root.to_path_buf());
+
+        let gate = state.startup_gate.clone();
+        let writer = gate.clone().write_owned().await;
+
+        let reader_gate = gate.clone();
+        let reader = tokio::spawn(async move {
+            let _read = reader_gate.read_owned().await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(!reader.is_finished(), "reader must wait while rebuild holds the gate");
+
+        drop(writer);
+        reader.await.unwrap();
+    }
+
 }

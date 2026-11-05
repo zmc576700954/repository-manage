@@ -178,6 +178,8 @@ pub async fn rebuild_active_kb(state: State<'_, AppState>) -> AppResult<usize> {
 
 #[tauri::command]
 pub async fn get_entries(state: State<'_, AppState>) -> AppResult<Vec<StoredEntry>> {
+    // 等待启动 rebuild 结束（无活动 KB 或提前返回时它不会持有闸门）。
+    let _gate = state.startup_gate.read().await;
     let idx = state.index.read().await;
     let entries = idx.get_all_entries()?;
     Ok(entries)
@@ -185,6 +187,8 @@ pub async fn get_entries(state: State<'_, AppState>) -> AppResult<Vec<StoredEntr
 
 #[tauri::command]
 pub async fn active_kb_entry_count(state: State<'_, AppState>) -> AppResult<usize> {
+    // 与 `get_entries` 同样等启动 rebuild 结束，避免首屏拿到旧计数。
+    let _gate = state.startup_gate.read().await;
     let idx = state.index.read().await;
     Ok(idx.entry_count()?)
 }
@@ -194,6 +198,8 @@ pub async fn get_entry_content(
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<Option<String>> {
+    // content_path 由索引提供；rebuild 结束前可能指向旧/缺失路径。
+    let _gate = state.startup_gate.read().await;
     let path = {
         let idx = state.index.read().await;
         idx.get_entry_content_path(&id)?
@@ -232,7 +238,7 @@ pub async fn create_relation(
         (f, t)
     };
 
-    append_reference_line(&from_path, &to_path, &to_id)?;
+    append_relation_line(&from_path, &to_path, &to_id, &relation_type)?;
 
     let idx = state.index.read().await;
     idx.add_relation(&from_id, &to_id, &relation_type, note.as_deref())?;
@@ -343,18 +349,19 @@ pub async fn delete_entry(
     Ok(())
 }
 
-/// 在 from .md 末尾追加一行 markdown 引用（指向 to 文件）。
-/// 单一真理源策略：rebuild 时会从 .md 重新识别并建关系。
-fn append_reference_line(
+/// 在 from 的正文文件末尾追加一行显式关系声明（`@relation: type [[id]]`）。
+/// 只写 `[[id]]` 的话 rebuild 只能恢复 `reference`，用户选择的 relationType 会丢失。
+fn append_relation_line(
     from_path: &std::path::Path,
     _to_path: &std::path::Path,
     to_id: &str,
+    relation_type: &str,
 ) -> AppResult<()> {
     let mut src = std::fs::read_to_string(from_path).unwrap_or_default();
     if !src.ends_with('\n') {
         src.push('\n');
     }
-    src.push_str(&format!("\n- [[{to_id}]]\n"));
+    src.push_str(&format!("\n@relation: {relation_type} [[{to_id}]]\n"));
     std::fs::write(from_path, src)?;
     Ok(())
 }
@@ -429,7 +436,7 @@ pub async fn create_entry_simple(
                     id: from_id.to_string(),
                 })?
         };
-        append_reference_line(&from_path, &file_path, &new_id)?;
+        append_relation_line(&from_path, &file_path, &new_id, rtype)?;
         let idx = state.index.read().await;
         idx.add_relation(from_id, &new_id, rtype, note.as_deref())?;
     }
@@ -444,7 +451,7 @@ pub async fn create_entry_simple(
                     id: to_id.to_string(),
                 })?
         };
-        append_reference_line(&file_path, &to_path, to_id)?;
+        append_relation_line(&file_path, &to_path, to_id, rtype)?;
         let idx = state.index.read().await;
         idx.add_relation(&new_id, to_id, rtype, note.as_deref())?;
     }
@@ -1520,7 +1527,7 @@ mod tests {
             let path = from_path.clone();
             handles.push(tokio::spawn(async move {
                 let _guard = lock.lock().await;
-                append_reference_line(&path, &path, &format!("id-{i}")).unwrap();
+                append_relation_line(&path, &path, &format!("id-{i}"), "reference").unwrap();
             }));
         }
         for h in handles {
@@ -1563,7 +1570,7 @@ mod tests {
             for i in 0..per_iter {
                 let path = from_path.clone();
                 handles.push(std::thread::spawn(move || {
-                    append_reference_line(&path, &path, &format!("id-{i}")).unwrap();
+                    append_relation_line(&path, &path, &format!("id-{i}"), "reference").unwrap();
                 }));
             }
             for h in handles {
@@ -1630,6 +1637,7 @@ mod tests {
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
             watcher: Arc::new(std::sync::Mutex::new(None)),
             watch_tx: Arc::new(std::sync::Mutex::new(None)),
+            startup_gate: Arc::new(tokio::sync::RwLock::new(())),
         }
     }
 
