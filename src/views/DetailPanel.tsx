@@ -167,6 +167,7 @@ export function DetailPanel() {
   const [headerBusy, setHeaderBusy] = useState(false);
   const [headerNotice, setHeaderNotice] = useState<string | null>(null);
   const [headerWarn, setHeaderWarn] = useState(false);
+  const [showMove, setShowMove] = useState(false);
 
   useEffect(() => {
     viewModeRef.current = viewMode;
@@ -226,6 +227,7 @@ export function DetailPanel() {
       setHeaderNotice(null);
       setHeaderWarn(false);
       setHeaderBusy(false);
+      setShowMove(false);
     };
 
     // 切换条目/关闭面板时，先把上一条目未保存的草稿落到 localStorage。
@@ -686,6 +688,13 @@ export function DetailPanel() {
             </p>
           </div>
           <button
+            onClick={() => setShowMove(true)}
+            className="shrink-0 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-100"
+            title={t('moveTitle')}
+          >
+            {t('moveButton')}
+          </button>
+          <button
             onClick={() => setShowRename(true)}
             className="shrink-0 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-100"
             title={t('renameTitle')}
@@ -906,7 +915,7 @@ export function DetailPanel() {
                 {t('outgoingEmpty', { action: t('addRelation') })}
               </p>
             ) : (
-              <ul className="space-y-1">
+              <ul className="list-enter space-y-1">
                 {groupedRelations.outgoing.map((rel, idx) => (
                   <li
                     key={`out-${idx}`}
@@ -948,7 +957,7 @@ export function DetailPanel() {
             {groupedRelations.incoming.length === 0 ? (
               <p className="text-sm text-gray-400">{t('incomingEmpty')}</p>
             ) : (
-              <ul className="space-y-1">
+              <ul className="list-enter space-y-1">
                 {groupedRelations.incoming.map((rel, idx) => (
                   <li
                     key={`in-${idx}`}
@@ -1117,6 +1126,25 @@ export function DetailPanel() {
           onSubmit={handleCreateEntry}
         />
       )}
+      {showMove && (
+        <MoveEntryDialog
+          entryId={entry.id}
+          initialDir={entry.dir ?? ''}
+          entryName={
+            entry.contentPath !== entry.path
+              ? entry.path.split('/').pop() || entry.id
+              : (entry.path.split('/').pop() ?? entry.id).replace(/\.md$/, '')
+          }
+          isDirectory={entry.contentPath !== entry.path}
+          attachmentCount={entry.attachments.length}
+          existingGroups={existingGroups}
+          onClose={() => setShowMove(false)}
+          onSuccess={(newId) => {
+            setShowMove(false);
+            selectEntry(newId);
+          }}
+        />
+      )}
       {formatPreview && (
         <FormatPreviewDialog
           changes={formatChanges}
@@ -1232,6 +1260,190 @@ function slugFromText(text: string): string {
     .replace(/[^a-z0-9一-龥]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 40);
+}
+
+interface MoveEntryDialogProps {
+  entryId: string;
+  initialDir: string;
+  /// 条目自身的目录名/文件名（不含扩展名），用于展示迁移后的 id。
+  entryName: string;
+  /// 目录型条目（content.md）随整个目录迁移，附件一并移动。
+  isDirectory: boolean;
+  attachmentCount: number;
+  existingGroups: string[];
+  onClose: () => void;
+  onSuccess: (newId: string) => void;
+}
+
+function normalizeDir(dir: string): string {
+  return dir
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\/+|\/+$/g, '');
+}
+
+/// 与后端 derive_id 规则一致：目录型条目 id 只取自身名字；扁平条目
+/// 在非根目录时使用 `目录-文件名`（路径分隔符替换为 `-`）。
+function moveTargetId(targetDir: string, entryName: string, isDirectory: boolean): string {
+  if (isDirectory || !targetDir) return entryName;
+  return `${targetDir}-${entryName}`.replace(/[\\/]/g, '-');
+}
+
+/// 同 KB 迁移对话框：目录层级选择 + 自定义目录，展示迁移后的路径与 id。
+/// 后端会一致迁移 id、级联引用、布局坐标、附件与历史目录，失败整体回滚。
+function MoveEntryDialog({
+  entryId,
+  initialDir,
+  entryName,
+  isDirectory,
+  attachmentCount,
+  existingGroups,
+  onClose,
+  onSuccess,
+}: MoveEntryDialogProps) {
+  const { t } = useTranslation('DetailPanel');
+  const moveEntry = useAppStore((s) => s.moveEntry);
+  const currentDir = normalizeDir(initialDir);
+  const [targetDir, setTargetDir] = useState(currentDir);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // 目录树：把已有 dir 拆成逐级路径，排序后按层级缩进展示。
+  const directories = useMemo(() => {
+    const set = new Set<string>();
+    for (const group of existingGroups) {
+      const parts = normalizeDir(group).split('/').filter(Boolean);
+      for (let i = 1; i <= parts.length; i += 1) {
+        set.add(parts.slice(0, i).join('/'));
+      }
+    }
+    const selfPath = currentDir ? `${currentDir}/${entryName}` : entryName;
+    return Array.from(set)
+      .filter((dir) => {
+        if (!isDirectory) return true;
+        // 不能把目录移动进它自己内部。
+        return !(dir === selfPath || dir.startsWith(`${selfPath}/`));
+      })
+      .sort();
+  }, [existingGroups, currentDir, entryName, isDirectory]);
+
+  const normalizedTarget = normalizeDir(targetDir);
+  const unchanged = normalizedTarget === currentDir;
+  const newId = moveTargetId(normalizedTarget, entryName, isDirectory);
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await moveEntry(entryId, normalizedTarget);
+      onSuccess(result.newId);
+    } catch (e) {
+      setError(t('moveError', { msg: localizeError(e) }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+      <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+        <h2 className="text-lg font-semibold text-gray-900">{t('moveTitle')}</h2>
+        <p className="mt-1 text-sm text-gray-500">{t('moveHint')}</p>
+
+        <div className="mt-3 grid grid-cols-2 gap-2 rounded-md bg-gray-50 p-2 text-xs text-gray-600">
+          <div>
+            <span className="font-semibold">{t('moveCurrent')}</span>
+            <span className="block break-all font-mono">
+              {currentDir || t('moveRoot')}
+            </span>
+          </div>
+          <div>
+            <span className="font-semibold">{t('moveTargetPreview')}</span>
+            <span className="block break-all font-mono">
+              {normalizedTarget || t('moveRoot')}
+            </span>
+          </div>
+          <div className="col-span-2">
+            <span className="font-semibold">{t('moveIdPreview')}</span>
+            <span className="font-mono">
+              {entryId} → {newId}
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <label className="block text-sm font-medium text-gray-700">
+            {t('moveTargetLabel')}
+          </label>
+          <input
+            value={targetDir}
+            onChange={(e) => setTargetDir(e.target.value)}
+            placeholder={t('moveTargetPlaceholder')}
+            className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono"
+          />
+          <div className="mt-2 max-h-40 overflow-y-auto rounded-md border border-gray-200">
+            <button
+              type="button"
+              onClick={() => setTargetDir('')}
+              className={`block w-full px-2 py-1.5 text-left text-sm ${
+                normalizedTarget === '' ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'
+              }`}
+            >
+              {t('moveRoot')}
+            </button>
+            {directories.map((dir) => {
+              const depth = dir.split('/').length - 1;
+              const name = dir.split('/').pop() ?? dir;
+              const active = normalizedTarget === dir;
+              return (
+                <button
+                  key={dir}
+                  type="button"
+                  onClick={() => setTargetDir(dir)}
+                  style={{ paddingLeft: `${8 + depth * 14}px` }}
+                  className={`block w-full py-1.5 pr-2 text-left text-sm ${
+                    active ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'
+                  }`}
+                  title={dir}
+                >
+                  <span className="text-gray-400">{depth === 0 ? '' : '└ '}</span>
+                  {name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <p className="mt-3 text-xs text-gray-500">{t('moveConsistency')}</p>
+        {attachmentCount > 0 && (
+          <p className="mt-1 text-xs text-amber-700">
+            {isDirectory
+              ? t('moveAttachmentsDir', { count: attachmentCount })
+              : t('moveAttachmentsFlat', { count: attachmentCount })}
+          </p>
+        )}
+
+        {error && <p className="mt-3 text-xs text-red-600">{error}</p>}
+
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            disabled={busy}
+            className="rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+          >
+            {t('moveCancel')}
+          </button>
+          <button
+            disabled={busy || unchanged}
+            onClick={submit}
+            className="rounded-md bg-blue-500 px-3 py-2 text-sm font-medium text-white hover:bg-blue-600 disabled:opacity-50"
+          >
+            {busy ? t('moveBusy') : t('moveSubmit')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 interface FormatPreviewDialogProps {

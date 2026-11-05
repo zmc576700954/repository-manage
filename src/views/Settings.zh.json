@@ -33,6 +33,19 @@
     "saveFailed": "保存失败：{{msg}}",
     "noKb": "先激活一个知识库才能配置字头。"
   },
+  "reading": {
+    "label": "阅读排版",
+    "reset": "恢复默认",
+    "fontSize": "字号",
+    "lineHeight": "行高",
+    "paragraphGap": "段间距",
+    "maxWidth": "最大行宽",
+    "unlimited": "不限制",
+    "codeFontSize": "代码字号",
+    "tableStyle": "表格样式",
+    "table": { "bordered": "边框", "striped": "斑马纹" },
+    "hint": "默认 {{defaults}}；参数保存在本机，自动应用到所有文档预览。"
+  },
   "errors": {
     "rebuildFailed": "重建失败：{{msg}}",
     "removeFailed": "移除失败：{{msg}}",

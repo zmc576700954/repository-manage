@@ -204,7 +204,7 @@ export function Sidebar() {
             {t('emptyKb')}
           </div>
         ) : (
-          <ul className="space-y-0.5">
+          <ul key={activeKb.id} className="list-enter space-y-0.5">
             {tree.map((node) => (
               <TreeRow
                 key={node.kind === 'group' ? `g:${node.fullPath}` : `e:${node.entry.id}`}

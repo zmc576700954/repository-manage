@@ -3,7 +3,9 @@ import { useTranslation } from 'react-i18next';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { remarkWikilink } from './remarkWikilink';
+import { useReadingPrefs } from '@/store/readingPrefsStore';
 import type { Components } from 'react-markdown';
+import type { CSSProperties } from 'react';
 
 export interface MarkdownViewProps {
   /** The raw markdown source. */
@@ -32,6 +34,21 @@ export function MarkdownView({
 }: MarkdownViewProps) {
   const { t } = useTranslation('MarkdownView');
   const [renderError, setRenderError] = useState(false);
+  const readingPrefs = useReadingPrefs((s) => s.prefs);
+
+  // 通过 CSS 变量把阅读排版参数传给 `.md-body`，切换参数不会改 DOM 结构，
+  // 也就不会触发布局抖动或重新适配。
+  const readingStyle = useMemo(
+    () =>
+      ({
+        '--md-font-size': `${readingPrefs.fontSize}px`,
+        '--md-line-height': String(readingPrefs.lineHeight),
+        '--md-paragraph-gap': `${readingPrefs.paragraphGap}em`,
+        '--md-max-width': readingPrefs.maxWidth === 0 ? 'none' : `${readingPrefs.maxWidth}ch`,
+        '--md-code-size': `${readingPrefs.codeFontSize}px`,
+      }) as CSSProperties,
+    [readingPrefs]
+  );
 
   // Reset error state when source changes
   useEffect(() => {
@@ -94,7 +111,11 @@ export function MarkdownView({
 
   try {
     return (
-      <div className="prose prose-sm max-w-none break-words text-gray-800">
+      <div
+        className="md-body break-words text-gray-800"
+        style={readingStyle}
+        data-table-style={readingPrefs.tableStyle}
+      >
         <ReactMarkdown
           remarkPlugins={[remarkGfm, remarkWikilink]}
           components={components}

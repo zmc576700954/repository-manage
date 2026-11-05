@@ -23,6 +23,7 @@
     "external-edit-detected": "检测到 {{path}} 被外部修改，请重新加载",
     "cascade-failed": "级联更新失败：{{failedFiles}}（{{reason}}）",
     "layout-migration-failed": "重命名已回滚：布局迁移失败（{{reason}}）",
+    "history-migration-failed": "迁移已回滚：历史目录迁移失败（{{reason}}）",
     "entry-content-missing": "文档的正文文件已不存在：{{id}}",
     "version-not-found": "该版本已不存在：{{version_id}}",
     "version-content-unavailable": "该版本正文超过 2MB，只保留了摘要与哈希，无法回退：{{version_id}}"

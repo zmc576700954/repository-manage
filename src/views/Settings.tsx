@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useAppStore } from '@/store/useAppStore';
 import { usePanelStore } from '@/store/panelStore';
+import { useReadingPrefs, DEFAULT_READING_PREFS } from '@/store/readingPrefsStore';
 import { useTranslation } from 'react-i18next';
 import { changeLanguage } from '@/i18n';
 
@@ -14,6 +15,36 @@ interface AddState {
 }
 
 const emptyAdd: AddState = { name: '', path: '', error: null, isAdding: false };
+
+interface PrefSliderProps {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  display: string;
+  onChange: (value: number) => void;
+}
+
+function PrefSlider({ label, value, min, max, step, display, onChange }: PrefSliderProps) {
+  return (
+    <div>
+      <div className="flex items-center justify-between text-xs text-gray-600">
+        <span>{label}</span>
+        <span className="font-mono text-gray-500">{display}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full accent-blue-500"
+      />
+    </div>
+  );
+}
 
 export function Settings() {
   const { t, i18n } = useTranslation('Settings');
@@ -28,6 +59,10 @@ export function Settings() {
   const setActiveKb = useAppStore((s) => s.setActiveKb);
   const templateHeader = useAppStore((s) => s.templateHeader);
   const saveTemplateHeader = useAppStore((s) => s.saveTemplateHeader);
+
+  const readingPrefs = useReadingPrefs((s) => s.prefs);
+  const updateReadingPrefs = useReadingPrefs((s) => s.update);
+  const resetReadingPrefs = useReadingPrefs((s) => s.reset);
 
   const { close } = usePanelStore();
 
@@ -180,6 +215,87 @@ export function Settings() {
           {headerError && (
             <div className="mt-2 rounded-md bg-red-50 p-2 text-xs text-red-700">{headerError}</div>
           )}
+        </section>
+
+        <section className="mb-4 border-b border-gray-200 pb-4">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-sm font-medium text-gray-700">{t('reading.label')}</div>
+            <button
+              onClick={resetReadingPrefs}
+              className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
+            >
+              {t('reading.reset')}
+            </button>
+          </div>
+          <div className="space-y-2.5">
+            <PrefSlider
+              label={t('reading.fontSize')}
+              value={readingPrefs.fontSize}
+              min={13}
+              max={20}
+              step={1}
+              display={`${readingPrefs.fontSize}px`}
+              onChange={(fontSize) => updateReadingPrefs({ fontSize })}
+            />
+            <PrefSlider
+              label={t('reading.lineHeight')}
+              value={readingPrefs.lineHeight}
+              min={1.4}
+              max={2.2}
+              step={0.05}
+              display={readingPrefs.lineHeight.toFixed(2)}
+              onChange={(lineHeight) => updateReadingPrefs({ lineHeight })}
+            />
+            <PrefSlider
+              label={t('reading.paragraphGap')}
+              value={readingPrefs.paragraphGap}
+              min={0.2}
+              max={1.4}
+              step={0.05}
+              display={`${readingPrefs.paragraphGap.toFixed(2)}em`}
+              onChange={(paragraphGap) => updateReadingPrefs({ paragraphGap })}
+            />
+            <PrefSlider
+              label={t('reading.maxWidth')}
+              value={readingPrefs.maxWidth}
+              min={0}
+              max={110}
+              step={1}
+              display={readingPrefs.maxWidth === 0 ? t('reading.unlimited') : `${readingPrefs.maxWidth}ch`}
+              onChange={(maxWidth) => updateReadingPrefs({ maxWidth })}
+            />
+            <PrefSlider
+              label={t('reading.codeFontSize')}
+              value={readingPrefs.codeFontSize}
+              min={11}
+              max={16}
+              step={0.5}
+              display={`${readingPrefs.codeFontSize}px`}
+              onChange={(codeFontSize) => updateReadingPrefs({ codeFontSize })}
+            />
+            <div>
+              <div className="mb-1 text-xs text-gray-600">{t('reading.tableStyle')}</div>
+              <div className="flex gap-2">
+                {(['bordered', 'striped'] as const).map((style) => (
+                  <button
+                    key={style}
+                    onClick={() => updateReadingPrefs({ tableStyle: style })}
+                    aria-pressed={readingPrefs.tableStyle === style}
+                    className={`rounded-md px-2.5 py-1 text-xs transition ${
+                      readingPrefs.tableStyle === style
+                        ? 'bg-blue-500 text-white'
+                        : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    {t(`reading.table.${style}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-gray-500">
+            {t('reading.hint', { defaults: `${DEFAULT_READING_PREFS.fontSize}px / ${DEFAULT_READING_PREFS.lineHeight}` })}
+          </p>
         </section>
 
         {kbs.length === 0 ? (

@@ -19,7 +19,7 @@ const TITLE_KEY: Record<PanelType, string> = {
 export const RightPanel: React.FC<Props> = ({ type, onClose, children }) => {
   const { t } = useTranslation('RightPanel');
   return (
-    <div className="flex min-h-[140px] flex-1 flex-col overflow-hidden rounded-md border border-gray-200 bg-white shadow-sm">
+    <div className="panel-enter flex min-h-[140px] flex-1 flex-col overflow-hidden rounded-md border border-gray-200 bg-white shadow-sm">
       <div className="flex items-center justify-between border-b border-gray-200 px-3 py-2">
         <h3 className="text-sm font-medium text-gray-900">{t(TITLE_KEY[type])}</h3>
         <button

@@ -33,6 +33,19 @@
     "saveFailed": "Save failed: {{msg}}",
     "noKb": "Activate a knowledge base before configuring a header."
   },
+  "reading": {
+    "label": "Reading typography",
+    "reset": "Restore defaults",
+    "fontSize": "Font size",
+    "lineHeight": "Line height",
+    "paragraphGap": "Paragraph gap",
+    "maxWidth": "Max line width",
+    "unlimited": "Unlimited",
+    "codeFontSize": "Code font size",
+    "tableStyle": "Table style",
+    "table": { "bordered": "Bordered", "striped": "Striped" },
+    "hint": "Defaults {{defaults}}; preferences are stored locally and applied to every preview."
+  },
   "errors": {
     "rebuildFailed": "Rebuild failed: {{msg}}",
     "removeFailed": "Remove failed: {{msg}}",
