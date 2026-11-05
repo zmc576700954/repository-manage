@@ -24,10 +24,16 @@ export default function App() {
   const activeKbRoot = useAppStore((s) =>
     s.kbs.find((k) => k.id === s.activeKbId)?.path ?? null
   );
+  const loadKbConfig = useAppStore((s) => s.loadKbConfig);
 
   useEffect(() => {
     refreshKbs().then(() => loadEntries());
   }, [refreshKbs, loadEntries]);
+
+  // KB 配置（当前只消费标准模版字头）随当前 KB 变化重新读取。
+  useEffect(() => {
+    if (activeKbRoot) void loadKbConfig();
+  }, [activeKbRoot, loadKbConfig]);
 
   // 外部（watcher）重建完成后自动刷新图谱：防抖合并、避开自身写操作回声，
   // 重命名/拖拽进行中延迟刷新。事件的产生时机见 lib.rs 的 emit 逻辑。

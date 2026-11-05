@@ -11,6 +11,7 @@ import { MarkdownView } from '@/markdown/MarkdownView';
 import { localizeError } from '@/i18n/translateError';
 import { clearDraft, pendingDraft, writeDraft, type EntryDraft } from '@/utils/editorDraft';
 import { changedLinePairs } from '@/utils/lineDiff';
+import { insertTemplateHeader, type TemplateInsertResult } from '@/utils/templateHeader';
 import type { Entry, FormatPreview, Relation } from '@shared/types';
 
 interface ExtLink {
@@ -115,6 +116,7 @@ export function DetailPanel() {
   const applyFormatEntry = useAppStore((s) => s.applyFormatEntry);
   const addInternalReference = useAppStore((s) => s.createRelation);
   const createEntryFromReference = useAppStore((s) => s.createEntryFromReference);
+  const templateHeader = useAppStore((s) => s.templateHeader);
   const closePanel = usePanelStore((s) => s.close);
   const openPanel = usePanelStore((s) => s.open);
 
@@ -162,6 +164,9 @@ export function DetailPanel() {
   const [formatPreview, setFormatPreview] = useState<FormatPreview | null>(null);
   const [formatBusy, setFormatBusy] = useState(false);
   const [formatNotice, setFormatNotice] = useState<string | null>(null);
+  const [headerBusy, setHeaderBusy] = useState(false);
+  const [headerNotice, setHeaderNotice] = useState<string | null>(null);
+  const [headerWarn, setHeaderWarn] = useState(false);
 
   useEffect(() => {
     viewModeRef.current = viewMode;
@@ -218,6 +223,9 @@ export function DetailPanel() {
       setExternalChanged(false);
       setFormatPreview(null);
       setFormatNotice(null);
+      setHeaderNotice(null);
+      setHeaderWarn(false);
+      setHeaderBusy(false);
     };
 
     // 切换条目/关闭面板时，先把上一条目未保存的草稿落到 localStorage。
@@ -503,6 +511,83 @@ export function DetailPanel() {
     }
   };
 
+  // ---------- 标准模版字头 ----------
+  const todayIso = (): string => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
+
+  const describeHeaderResult = (result: TemplateInsertResult): string | null => {
+    switch (result.status) {
+      case 'empty':
+        return t('headerNotConfigured');
+      case 'conflict':
+        return t('headerFrontMatterConflict');
+      case 'already-present':
+        return t('headerAlreadyPresent');
+      default:
+        return null;
+    }
+  };
+
+  const handleInsertHeader = async () => {
+    if (!entry) return;
+    setHeaderNotice(null);
+    setHeaderWarn(false);
+
+    // 编辑态：插入编辑器文本，由用户按保存按钮写盘。
+    if (viewModeRef.current === 'edit') {
+      const result = insertTemplateHeader(editorTextRef.current, templateHeader, {
+        title: entry.title,
+        date: todayIso(),
+      });
+      const problem = describeHeaderResult(result);
+      if (problem) {
+        setHeaderNotice(problem);
+        setHeaderWarn(true);
+        return;
+      }
+      setEditorText(result.content);
+      editorTextRef.current = result.content;
+      dirtyRef.current = true;
+      setDirty(true);
+      setSaveState('idle');
+      setSaveError(null);
+      setHeaderNotice(t('headerInsertedUnsaved'));
+      return;
+    }
+
+    if (content.markdown == null) return;
+    const base = content.markdown;
+    const result = insertTemplateHeader(base, templateHeader, {
+      title: entry.title,
+      date: todayIso(),
+    });
+    const problem = describeHeaderResult(result);
+    if (problem) {
+      setHeaderNotice(problem);
+      setHeaderWarn(true);
+      return;
+    }
+
+    setHeaderBusy(true);
+    try {
+      const saved = await saveEntryContent(entry.id, result.content);
+      applySavedContent(saved.content);
+      clearDraft(activeKbId, entry.id);
+      setPendingDraftState(null);
+      setExternalChanged(false);
+      setExternalText(null);
+      setHeaderNotice(t('headerInserted'));
+    } catch (e) {
+      setHeaderNotice(t('headerInsertError', { msg: localizeError(e) }));
+      setHeaderWarn(true);
+    } finally {
+      setHeaderBusy(false);
+    }
+  };
+
   const handlePreviewFormat = async () => {
     if (!entry) return;
     setFormatBusy(true);
@@ -672,6 +757,14 @@ export function DetailPanel() {
                   >
                     {t('formatButton')}
                   </button>
+                  <button
+                    onClick={handleInsertHeader}
+                    disabled={headerBusy}
+                    title={t('headerHint')}
+                    className="rounded-md border border-gray-300 bg-white px-2 py-0.5 text-[11px] text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+                  >
+                    {headerBusy ? t('headerBusy') : t('headerButton')}
+                  </button>
                   {viewMode === 'edit' && (
                     <button
                       onClick={handleSave}
@@ -742,6 +835,11 @@ export function DetailPanel() {
             )}
 
             {formatNotice && <p className="mb-2 text-xs text-blue-700">{formatNotice}</p>}
+            {headerNotice && (
+              <p className={`mb-2 text-xs ${headerWarn ? 'text-amber-700' : 'text-green-700'}`}>
+                {headerNotice}
+              </p>
+            )}
 
             {content.markdown != null ? (
               viewMode === 'rendered' ? (
@@ -988,7 +1086,13 @@ export function DetailPanel() {
         </div>
       </div>
       {showRelDialog && (
-        <RelationDialog fromId={entry.id} onClose={() => setShowRelDialog(false)} />
+        <RelationDialog
+          fromId={entry.id}
+          onClose={() => setShowRelDialog(false)}
+          beforeCreate={async () =>
+            dirtyRef.current ? await handleSave() : true
+          }
+        />
       )}
       {showRename && (
         <RenameEntryDialog

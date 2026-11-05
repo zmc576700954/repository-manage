@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { useAppStore } from '@/store/useAppStore';
@@ -26,8 +26,36 @@ export function Settings() {
   const addKb = useAppStore((s) => s.addKb);
   const removeKb = useAppStore((s) => s.removeKb);
   const setActiveKb = useAppStore((s) => s.setActiveKb);
+  const templateHeader = useAppStore((s) => s.templateHeader);
+  const saveTemplateHeader = useAppStore((s) => s.saveTemplateHeader);
 
   const { close } = usePanelStore();
+
+  const [headerDraft, setHeaderDraft] = useState(templateHeader);
+  const [headerBusy, setHeaderBusy] = useState(false);
+  const [headerNotice, setHeaderNotice] = useState<string | null>(null);
+  const [headerError, setHeaderError] = useState<string | null>(null);
+
+  // KB 配置异步载入后同步草稿；切换 KB 时也重新同步。
+  useEffect(() => {
+    setHeaderDraft(templateHeader);
+    setHeaderNotice(null);
+    setHeaderError(null);
+  }, [templateHeader, activeKbId]);
+
+  const handleSaveHeader = async () => {
+    setHeaderBusy(true);
+    setHeaderError(null);
+    setHeaderNotice(null);
+    try {
+      await saveTemplateHeader(headerDraft);
+      setHeaderNotice(t('template.saved'));
+    } catch (e) {
+      setHeaderError(t('template.saveFailed', { msg: (e as Error).message }));
+    } finally {
+      setHeaderBusy(false);
+    }
+  };
 
   const [add, setAdd] = useState<AddState>(emptyAdd);
   const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
@@ -114,6 +142,46 @@ export function Settings() {
       )}
 
       <div className="flex-1 overflow-y-auto p-4">
+        <section className="mb-4 border-b border-gray-200 pb-4">
+          <div className="mb-1 text-sm font-medium text-gray-700">{t('template.label')}</div>
+          <p className="mb-2 text-xs text-gray-500">{t('template.hint')}</p>
+          <textarea
+            rows={4}
+            value={headerDraft}
+            disabled={!activeKbId}
+            onChange={(e) => {
+              setHeaderDraft(e.target.value);
+              setHeaderNotice(null);
+            }}
+            placeholder={t('template.placeholder')}
+            className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-xs focus:border-blue-500 focus:outline-none disabled:bg-gray-50"
+          />
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              onClick={handleSaveHeader}
+              disabled={!activeKbId || headerBusy}
+              className="rounded-md bg-blue-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-600 disabled:opacity-50"
+            >
+              {headerBusy ? t('template.saving') : t('template.save')}
+            </button>
+            <button
+              onClick={() => {
+                setHeaderDraft('');
+                setHeaderNotice(null);
+              }}
+              disabled={!activeKbId}
+              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {t('template.clear')}
+            </button>
+            {headerNotice && <span className="text-xs text-green-600">{headerNotice}</span>}
+          </div>
+          {!activeKbId && <div className="mt-2 text-xs text-gray-500">{t('template.noKb')}</div>}
+          {headerError && (
+            <div className="mt-2 rounded-md bg-red-50 p-2 text-xs text-red-700">{headerError}</div>
+          )}
+        </section>
+
         {kbs.length === 0 ? (
           <div className="rounded-md border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500">
             {t('empty')}

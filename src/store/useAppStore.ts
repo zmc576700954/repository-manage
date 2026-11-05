@@ -21,6 +21,11 @@ interface AppState {
   kbs: KBInfo[];
   activeKbId: string | null;
   activeKbEntryCount: number;
+  /// 当前 KB 的 `.synapse-config.yaml`（get_kb_config 返回的 JSON）。
+  /// 目前只消费 `templateHeader`，其余键原样保留，避免写回时丢失。
+  kbConfig: Record<string, unknown> | null;
+  /// 当前 KB 配置里的标准模版字头；空串表示未配置。
+  templateHeader: string;
   /// 每次 entries 被刷新时递增。详情面板据此判断“列表刷新了”，
   /// 在不改变选中项的前提下重新核对正文内容。
   entriesRevision: number;
@@ -49,7 +54,7 @@ interface AppState {
   toggleRelationType: (type: RelationType) => void;
   toggleFilterLabel: (label: string) => void;
   clearFilters: () => void;
-  createRelation: (fromId: string, toId: string, type: RelationType, note?: string) => Promise<void>;
+  createRelation: (fromId: string, toId: string, type: RelationType, note?: string) => Promise<boolean>;
   deleteRelation: (fromId: string, toId: string, type: RelationType) => Promise<void>;
   createEntryFromReference: (
     fromId: string,
@@ -73,6 +78,10 @@ interface AppState {
   addKb: (name: string, path: string) => Promise<void>;
   removeKb: (id: string) => Promise<void>;
   setActiveKb: (id: string) => Promise<void>;
+  /// 读取当前 KB 的配置（切换 KB 后调用）。
+  loadKbConfig: () => Promise<void>;
+  /// 读-改-写：只更新 `templateHeader`，保留配置文件里的其它键。
+  saveTemplateHeader: (header: string) => Promise<void>;
 
   /// Cycle 3 polish B: request that the rename dialog open for `id`.
   /// DetailPanel observes this and renders RenameEntryDialog.
@@ -123,6 +132,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   kbs: [],
   activeKbId: null,
   activeKbEntryCount: 0,
+  kbConfig: null,
+  templateHeader: '',
   entriesRevision: 0,
   renamingEntryId: null,
   isDraggingNode: false,
@@ -213,8 +224,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         note,
       });
       await get().loadEntries();
+      return true;
     } catch (e) {
       set({ error: errMsg(e) });
+      return false;
     }
   },
 
@@ -481,6 +494,44 @@ export const useAppStore = create<AppState>((set, get) => ({
     const result = await invoke<SaveEntryResult>('restore_entry_version', { id, versionId });
     await get().refreshEntriesQuiet();
     return result;
+  },
+
+  loadKbConfig: async () => {
+    const { activeKbId, kbs } = get();
+    const kb = kbs.find((k) => k.id === activeKbId);
+    if (!kb) {
+      set({ kbConfig: null, templateHeader: '' });
+      return;
+    }
+    try {
+      const config = await invoke<Record<string, unknown>>('get_kb_config', {
+        kbRoot: kb.path,
+      });
+      const safe = config && typeof config === 'object' ? config : {};
+      const header = typeof safe.templateHeader === 'string' ? safe.templateHeader : '';
+      set({ kbConfig: safe, templateHeader: header });
+    } catch {
+      // 配置读取失败不影响主流程；DetailPanel 会提示字头未配置。
+      set({ kbConfig: null, templateHeader: '' });
+    }
+  },
+
+  saveTemplateHeader: async (header) => {
+    const { activeKbId, kbs } = get();
+    const kb = kbs.find((k) => k.id === activeKbId);
+    if (!kb) throw new Error('no-active-kb');
+    let existing: Record<string, unknown> = {};
+    try {
+      const config = await invoke<Record<string, unknown>>('get_kb_config', {
+        kbRoot: kb.path,
+      });
+      if (config && typeof config === 'object') existing = config;
+    } catch {
+      existing = {};
+    }
+    const next = { ...existing, templateHeader: header };
+    await invoke('update_kb_config', { kbRoot: kb.path, config: next });
+    set({ kbConfig: next, templateHeader: header });
   },
 
   /// Cycle 3 polish B: signal that the rename dialog should open for `id`.

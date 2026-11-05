@@ -22,6 +22,17 @@
   "browse": "Browse",
   "addIdle": "Add",
   "addBusy": "Adding…",
+  "template": {
+    "label": "Document header template",
+    "hint": "Inserted at the start of the body without overwriting existing content. Supports double-brace placeholders title and date. If the template is YAML front matter but the document already has front matter, insertion stops with a conflict notice.",
+    "placeholder": "e.g. > Recorded on double-brace date",
+    "save": "Save header",
+    "saving": "Saving…",
+    "clear": "Clear draft",
+    "saved": "Saved",
+    "saveFailed": "Save failed: {{msg}}",
+    "noKb": "Activate a knowledge base before configuring a header."
+  },
   "errors": {
     "rebuildFailed": "Rebuild failed: {{msg}}",
     "removeFailed": "Remove failed: {{msg}}",

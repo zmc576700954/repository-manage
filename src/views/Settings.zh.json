@@ -22,6 +22,17 @@
   "browse": "浏览",
   "addIdle": "添加",
   "addBusy": "添加中…",
+  "template": {
+    "label": "文档字头模版",
+    "hint": "插入正文开头时不覆盖已有内容。支持双花括号占位符 title、date；若字头以 --- 包裹 YAML front matter 而文档已有 front matter，将提示冲突并停止插入。",
+    "placeholder": "例如：> 记录于 双花括号 date",
+    "save": "保存字头",
+    "saving": "保存中…",
+    "clear": "清空草稿",
+    "saved": "已保存",
+    "saveFailed": "保存失败：{{msg}}",
+    "noKb": "先激活一个知识库才能配置字头。"
+  },
   "errors": {
     "rebuildFailed": "重建失败：{{msg}}",
     "removeFailed": "移除失败：{{msg}}",

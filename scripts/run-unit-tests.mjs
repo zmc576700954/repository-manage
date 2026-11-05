@@ -23,6 +23,7 @@ const tsTests = [
   'src/views/layoutSync.test.ts',
   'src/utils/editorDraft.test.ts',
   'src/utils/lineDiff.test.ts',
+  'src/utils/templateHeader.test.ts',
 ];
 const plainTests = ['scripts/cleanup-temp.test.mjs'];
 const isWindows = process.platform === 'win32';

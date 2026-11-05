@@ -1,10 +1,24 @@
 {
-  "title": "创建关联",
+  "title": "快捷关联",
   "fromLabel": "从：{{id}}",
-  "toLabel": "目标条目",
-  "toPlaceholder": "选择…",
-  "typeLabel": "类型",
+  "searchLabel": "搜索目标",
+  "searchPlaceholder": "按标题、id 或标签搜索…",
+  "noMatches": "没有匹配的条目。",
+  "alreadyRelated": "已有该类型",
+  "typeLabel": "关系类型",
   "noteLabel": "备注（可选）",
+  "insertHint": "创建后会在正文末尾追加：@relation: {{type}} [[{{id}}]]",
+  "duplicateHint": "该条目已存在同类型关系，请换类型或先删除旧关系。",
+  "pendingSaveFailed": "当前编辑尚未保存成功，已中止关联。",
+  "createFailed": "创建关联失败，请稍后重试。",
   "cancel": "取消",
-  "create": "创建"
+  "create": "创建关联",
+  "creating": "创建中…",
+  "types": {
+    "reference": "引用",
+    "derived": "派生",
+    "contradicts": "矛盾",
+    "supersedes": "取代",
+    "extends": "扩展"
+  }
 }

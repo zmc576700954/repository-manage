@@ -1,10 +1,24 @@
 {
-  "title": "Create Relation",
+  "title": "Quick Link",
   "fromLabel": "From: {{id}}",
-  "toLabel": "To Entry",
-  "toPlaceholder": "Select…",
-  "typeLabel": "Type",
+  "searchLabel": "Search target",
+  "searchPlaceholder": "Search by title, id or tag…",
+  "noMatches": "No matching entries.",
+  "alreadyRelated": "Already linked",
+  "typeLabel": "Relation type",
   "noteLabel": "Note (optional)",
+  "insertHint": "A line is appended to the body: @relation: {{type}} [[{{id}}]]",
+  "duplicateHint": "This target already has the same relation type. Choose another type or remove the old relation.",
+  "pendingSaveFailed": "Unsaved edits could not be saved; relation creation was cancelled.",
+  "createFailed": "Failed to create the relation. Please retry.",
   "cancel": "Cancel",
-  "create": "Create"
+  "create": "Create link",
+  "creating": "Creating…",
+  "types": {
+    "reference": "Reference",
+    "derived": "Derived",
+    "contradicts": "Contradicts",
+    "supersedes": "Supersedes",
+    "extends": "Extends"
+  }
 }
