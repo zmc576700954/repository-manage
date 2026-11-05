@@ -20,5 +20,8 @@
     }
   },
   "include": ["src", "shared"],
+  // 前端单测由 `npm run test:unit` 用 esbuild + node:test 直接运行，
+  // 不参与应用编译（项目未引入 @types/node 与测试运行器的类型）。
+  "exclude": ["src/**/*.test.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Synapse KB — a lightweight desktop personal knowledge base with graph/relations view. Users manage folders of `content.md` files (notes), see them as nodes in a force-directed map (React Flow), and wire them together with typed relations (`reference`/`derived`/`contradicts`/`supersedes`/`extends`/`custom`).
+Synapse KB — a lightweight desktop personal knowledge base with graph/relations view. Users manage Markdown notes either as flat `*.md` files or as `content.md` inside per-entry folders, see them as nodes on a deterministic grouped grid (React Flow), and wire them together with typed relations (`reference`/`derived`/`contradicts`/`supersedes`/`extends`/`custom`). Node drag positions persist to `.synapse-layout.json` in the KB root.
 
 The on-disk file format & metadata conventions are defined in [docs/standards.md](docs/standards.md). Read that before changing parser/scanner/entry code.
 
@@ -56,18 +56,18 @@ src-tauri/
     lib.rs                    # tauri::Builder, registers invoke handlers, wires shared state
     state.rs                  # AppState (Arc<RwLock<...>>: index, kb_registry, current_kb)
     commands.rs               # all #[tauri::command] entry points invoked from the frontend
-    scanner.rs                # walkdir → md file paths
+    scanner.rs                # walkdir → entry paths (flat *.md or folders with content.md); reports KbLayout
     parser/
       mod.rs, comments.rs, yaml_field.rs, links.rs, attachments.rs
                              # extract frontmatter / `@synapse-*` comments / [[wikilinks]] / ![[embeds]]
-    entry.rs                  # RawEntry → stored Entry model
+    entry.rs                  # RawEntry → stored Entry model; unified parser for both layouts
     index.rs                  # SQLite schema + rebuild/get_entries
     kb_registry.rs            # multi-KB support: list/add/remove/switch active KB (persisted)
-    layout_store.rs           # .synapse-layout.json (saved node positions)
+    layout_store.rs           # .synapse-layout.json read/write, exposed via get_layout / save_node_position
     paths.rs, error.rs
 ```
 
-**State flow:** frontend calls `invoke('cmd', args)` → `commands.rs` reads `AppState` → updates `Index` / `KbRegistry` / `LayoutStore` → `loadEntries()` re-fetches everything and `useAppStore` updates. On startup the active KB's index is force-rebuilt (line ~46 of `lib.rs`) to keep DB schema in sync with code.
+**State flow:** frontend calls `invoke('cmd', args)` → `commands.rs` reads `AppState` → updates `Index` / `KbRegistry` / `LayoutStore` → `loadEntries()` re-fetches everything and `useAppStore` updates. On startup the active KB is rebuilt asynchronously on the Tauri runtime (not on the main thread); `get_entries` waits behind a startup gate so the first paint never reads a half-built index. `Index::open` runs the schema migrations, so the rebuild is purely a data sync.
 
 **Multi-KB:** since `kb_registry.rs` exists, the app supports several knowledge bases; the "active" one is what the UI shows. `refreshKbs()` and `setActiveKb()` in the store are how the UI reacts to changes.
 
@@ -90,5 +90,5 @@ The `App` namespace at `src/App.{zh,en}.json` is for chrome-level strings only (
 
 - **Path aliases:** import shared types via `from '@shared/types'`, app code via `from '@/...'`.
 - **Relation shapes/semantics:** defined by `docs/standards.md` — colors and arrow styles correspond to the 5 default types. Custom relations are allowed.
-- **SQLite is the source of truth at runtime;** the on-disk `content.md` files are parsed at startup (`index.rebuild(active_kb_path)`). Mutations from the UI go through commands → index → optional file writes.
+- **Markdown files on disk are the source of truth;** the SQLite index is a rebuildable cache. Read commands serve the index, but every mutation writes the `.md` file first and then re-indexes. Startup rebuilds the active KB from disk, and the file watcher keeps it in sync afterwards.
 - **No Docker / no local HTTP server in current code.** The repo's `Dockerfile` and `src-tauri/src/local_server.rs` were removed (see git status); treat the Tauri desktop build as the only target.

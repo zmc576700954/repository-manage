@@ -62,6 +62,12 @@ pub fn indexes_dir() -> PathBuf {
 mod tests {
     use super::*;
 
+    /// 环境变量是进程级全局状态，`cargo test` 默认并行执行，会让
+    /// `index_db_env_override` 设置的 `SYNAPSE_INDEX_DB` 被
+    /// `index_db_path_is_inside_app_data` 读到，从而随机失败。所有读写
+    /// 环境变量的用例共用这把锁，保证它们串行执行。
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn paths_are_in_app_data() {
         let dir = app_data_dir();
@@ -70,6 +76,7 @@ mod tests {
 
     #[test]
     fn index_db_path_is_inside_app_data() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let db = index_db_path();
         let dir = app_data_dir();
         assert!(db.starts_with(&dir), "{:?} should start with {:?}", db, dir);
@@ -78,6 +85,7 @@ mod tests {
 
     #[test]
     fn kb_root_env_override() {
+        let _lock = ENV_LOCK.lock().unwrap();
         // 测试需要串行执行，临时设置/清理
         std::env::set_var("SYNAPSE_KB_ROOT", "/tmp/synapse-test-kb");
         assert_eq!(kb_root(), PathBuf::from("/tmp/synapse-test-kb"));
@@ -86,6 +94,7 @@ mod tests {
 
     #[test]
     fn index_db_env_override() {
+        let _lock = ENV_LOCK.lock().unwrap();
         std::env::set_var("SYNAPSE_INDEX_DB", "/tmp/custom-index.db");
         assert_eq!(index_db_path(), PathBuf::from("/tmp/custom-index.db"));
         std::env::remove_var("SYNAPSE_INDEX_DB");

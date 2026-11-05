@@ -13,9 +13,13 @@ npm run tauri:dev
 
 - **Tauri 2.0** desktop shell
 - **Rust** backend for file scanning, parsing, indexing
-- **React + React Flow** frontend
-- **SQLite** local index
-- **axum** local HTTP server (for Web build)
+- **React + React Flow** frontend (deterministic grouped grid, node positions persisted)
+- **SQLite** local index (rebuildable cache, not the source of truth)
+- Knowledge base content lives in Markdown files on disk — either flat `*.md`
+  files or `content.md` inside per-entry folders
+
+There is no web/HTTP mode: the frontend talks to the Rust backend exclusively
+through Tauri IPC (`invoke`).
 
 ## Standards
 
