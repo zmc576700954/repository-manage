@@ -266,7 +266,6 @@ pub async fn get_layout(
     state: State<'_, AppState>,
 ) -> AppResult<std::collections::HashMap<String, crate::layout_store::NodePosition>> {
     let runtime_dir = runtime_dir_or_err(&state).await?;
-    let kb_root = kb_root_or_err(&state).await?;
     Ok(crate::layout_store::load_positions(&runtime_dir))
 }
 
@@ -367,7 +366,6 @@ async fn write_entry_content(
     origin: crate::history::SaveOrigin,
     restored_from: Option<String>,
 ) -> AppResult<SaveEntryResult> {
-    let kb_root = kb_root_or_err(state).await?;
     let path = content_path_for(state, id).await?;
     let previous = read_content(id, &path)?;
     let changed = previous != content;
@@ -592,7 +590,6 @@ pub async fn restore_entry_version(
     version_id: String,
 ) -> AppResult<SaveEntryResult> {
     let _guard = state.write_lock.lock().await;
-    let kb_root = kb_root_or_err(&state).await?;
     let runtime_dir = runtime_dir_or_err(&state).await?;
     let content = crate::history::read_version_content(&runtime_dir, &id, &version_id)?
         .ok_or_else(|| AppError::VersionContentUnavailable {
