@@ -690,17 +690,25 @@ impl Index {
         // 为每个 entry 跑校验规则，让 RawEntry.validation 有数据。
         // 这样 `error_count` / `warning_count` 才能正确写入 DB。
         // E4 门控：KB 里任一条目声明了 tags 体系才启用 `type:` 前缀要求。
+        // Q14：`_` 前缀机制目录（`_proposals/` 等）豁免规则检查——仍索引
+        // 展示，但 `validation` 置空，图谱上不出错误徽标（与 validate_kb
+        // 的豁免口径一致）。
         let tags_system_declared = entries.iter().any(|e| e.declares_tags_system);
         let entries: Vec<RawEntry> = entries
             .into_iter()
             .map(|mut e| {
-                e.validation = crate::validator::rules::check_all(
-                    &e,
-                    kb_root,
-                    &lookups.id_set,
-                    layout,
-                    tags_system_declared,
-                );
+                let entry_path = &e.path; // RawEntry.path = 条目绝对路径
+                if crate::scanner::is_mechanism_path(kb_root, entry_path) {
+                    e.validation = Vec::new();
+                } else {
+                    e.validation = crate::validator::rules::check_all(
+                        &e,
+                        kb_root,
+                        &lookups.id_set,
+                        layout,
+                        tags_system_declared,
+                    );
+                }
                 e
             })
             .collect();
@@ -807,7 +815,8 @@ pub(crate) struct LinkLookups {
 
 /// kaiwu NN-MM 代号的路径机械派生：`dir` 第一段与文件 stem 的开头数字。
 /// F7：35/35 可机械派生；任一侧无数字前缀 → None（不硬造代号）。
-fn derive_doc_code(e: &RawEntry) -> Option<String> {
+/// 批次 3 起 pub：MCP save_content 的 `docCodeMissing` 提示用它给建议值。
+pub fn derive_doc_code(e: &RawEntry) -> Option<String> {
     let dir_seg = e.dir.as_deref()?.split('/').next()?;
     let stem = e.path.file_stem()?.to_string_lossy().to_string();
     doc_code_from_parts(dir_seg, &stem)

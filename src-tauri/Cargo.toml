@@ -44,5 +44,9 @@ name = "synapse"
 path = "src/bin/synapse.rs"
 
 [[bin]]
+name = "synapse-mcp"
+path = "src/bin/synapse_mcp.rs"
+
+[[bin]]
 name = "synapse-app"
 path = "src/main.rs"

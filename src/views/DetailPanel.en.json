@@ -123,6 +123,7 @@
   "versionOriginRestore": "Restored",
   "versionOriginExternal": "External change",
   "versionOriginTrim": "Trim audit",
+  "versionOriginAgent": "Agent write",
   "versionRestoredFrom": "restored from {{version}}",
   "versionSummary": "+{{added}} / -{{removed}} lines",
   "versionSize": "{{size}}",

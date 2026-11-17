@@ -8,16 +8,22 @@ use std::path::Path;
 use crate::error::{AppError, AppResult};
 use crate::parser::fm_writer::{apply_edits, has_key, FmValue, FrontmatterEdit};
 
-/// Apply a set of metadata changes to a content.md file. Only the
-/// frontmatter block is touched; everything else is byte-identical
-/// to the input.
-pub fn apply_metadata_changes(
+/// 批次 3（MCP dry_run）：与 [`apply_metadata_changes`] 同一变换，但
+/// 纯读——返回改写后的完整文件内容，不落任何字节。
+pub fn preview_metadata_changes(
     path: &Path,
     changes: &MetadataChanges,
-) -> AppResult<()> {
+) -> AppResult<String> {
     let content = std::fs::read_to_string(path).map_err(|e| {
         AppError::io(format!("metadata_updater: read {}", path.display()), e)
     })?;
+    Ok(render_metadata_edits(&content, changes))
+}
+
+/// `changes` → frontmatter 编辑 → 应用到 `content` 的纯函数。
+/// `apply_metadata_changes` 与 `preview_metadata_changes` 共用，
+/// 保证预览与落盘字节级一致。
+fn render_metadata_edits(content: &str, changes: &MetadataChanges) -> String {
     let mut edit = FrontmatterEdit::default();
     if let Some(t) = &changes.title {
         edit.set.push(("title".into(), FmValue::Str(t.clone())));
@@ -32,13 +38,26 @@ pub fn apply_metadata_changes(
         // 方言路由（D3）：kaiwu 式 frontmatter KB 的状态键是中文 `状态`
         // （M3a 枚举校验的对象）；rm 原生 KB 用 ASCII `status`。
         // 判据：文件 frontmatter 里已有顶层 `状态` 键。
-        let status_key = if has_key(&content, "状态") { "状态" } else { "status" };
+        let status_key = if has_key(content, "状态") { "状态" } else { "status" };
         edit.set.push((status_key.into(), FmValue::Str(s.clone())));
     }
     if edit.set.is_empty() {
-        return Ok(());
+        return content.to_string();
     }
-    let new_content = apply_edits(&content, &edit);
+    apply_edits(content, &edit)
+}
+
+/// Apply a set of metadata changes to a content.md file. Only the
+/// frontmatter block is touched; everything else is byte-identical
+/// to the input.
+pub fn apply_metadata_changes(
+    path: &Path,
+    changes: &MetadataChanges,
+) -> AppResult<()> {
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        AppError::io(format!("metadata_updater: read {}", path.display()), e)
+    })?;
+    let new_content = render_metadata_edits(&content, changes);
     if new_content != content {
         std::fs::write(path, &new_content).map_err(|e| {
             AppError::io(format!("metadata_updater: write {}", path.display()), e)

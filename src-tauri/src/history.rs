@@ -39,6 +39,9 @@ pub enum SaveOrigin {
     Restore,
     External,
     Trim,
+    /// 批次 3（D7）：经 stdio MCP server 写入的 Agent 结构性编辑。
+    /// 出处由版本历史承载；Agent 不代 bump `最后更新` / `下次 review`。
+    Agent,
 }
 
 impl SaveOrigin {
@@ -50,6 +53,7 @@ impl SaveOrigin {
             SaveOrigin::Restore => "restore",
             SaveOrigin::External => "external",
             SaveOrigin::Trim => "trim",
+            SaveOrigin::Agent => "agent",
         }
     }
 }
@@ -157,7 +161,8 @@ fn content_hash(content: &str) -> String {
     format!("{:016x}", crate::fingerprint::fnv1a64(content.as_bytes()))
 }
 
-fn diff_summary(before: &str, after: &str) -> VersionSummary {
+/// 行级增删摘要（前后缀对齐）。批次 3 起 pub：MCP dry_run 预览复用同一口径。
+pub fn diff_summary(before: &str, after: &str) -> VersionSummary {
     let b: Vec<&str> = before.split('\n').collect();
     let a: Vec<&str> = after.split('\n').collect();
 

@@ -11,6 +11,7 @@ const ORIGIN_LABEL: Record<VersionOrigin, string> = {
   restore: 'versionOriginRestore',
   external: 'versionOriginExternal',
   trim: 'versionOriginTrim',
+  agent: 'versionOriginAgent',
 };
 
 function formatBytes(n: number): string {

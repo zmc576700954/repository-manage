@@ -8,13 +8,17 @@ pub mod history;
 pub mod index;
 pub mod kb_registry;
 pub mod layout_store;
+/// stdio MCP server（批次 3，Q14）：tauri-free，供 `synapse-mcp` bin 复用。
+pub mod mcp;
 pub mod parser;
 pub mod paths;
 pub mod scanner;
 pub mod state;
 pub mod validator;
 
-#[cfg(feature = "tauri")]
+// commands.rs 同时承载 tauri command 包装器（按条目 cfg 门控）与
+// `*_impl` 纯函数层（无条件编译）——批次 3 起 stdio MCP server 在
+// 无 tauri 特性的构建里复用后者（Q11 / merge-kaiwu-plan 批次 3）。
 pub mod commands;
 
 #[cfg(feature = "tauri")]

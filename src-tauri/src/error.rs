@@ -98,6 +98,12 @@ pub enum AppError {
     #[error("metadata-invalid-field: {field} {reason}")]
     MetadataInvalidField { field: String, reason: String },
 
+    /// 批次 3（D7 行为宪章）：Agent 经 MCP 的结构写试图改动人工复审
+    /// 元数据（`最后更新` / `下次 review`）。这些键是人工登记的复核日期，
+    /// Agent 代改等于替人签到——一律拒绝。
+    #[error("agent-frozen-field: {keys}")]
+    AgentFrozenField { keys: String },
+
     /// Rename precheck found that the target id is already taken by
     /// another entry in the same KB.
     #[error("rename-conflict: id '{new_id}' already exists")]

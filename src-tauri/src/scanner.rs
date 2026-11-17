@@ -117,6 +117,22 @@ fn is_artifact(root: &Path, path: &Path) -> bool {
     })
 }
 
+/// KB 根以下的路径段里是否存在 `_` 前缀的**机制目录**（Q14：`_` 前缀 =
+/// 机制目录，如 MCP 语义写提案的 `_proposals/`）。
+///
+/// 与点前缀（`is_artifact`）不同：机制目录**仍被索引展示**（图谱可见、
+/// 可被链接解析引用），但双侧校验器（rm validator / kaiwu check_kb）
+/// 统一豁免规范检查——提案文件有自己的元数据形态，不应被 M1/H 组规则打回。
+pub fn is_mechanism_path(root: &Path, path: &Path) -> bool {
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    rel.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(|name| name.starts_with('_'))
+    })
+}
+
 /// 提取条目的 ID（相对于 root 的目录名）。
 pub fn entry_id_from_path(root: &Path, entry_path: &Path) -> Option<String> {
     entry_path

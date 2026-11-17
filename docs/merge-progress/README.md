@@ -4,8 +4,8 @@
 > **本文档是执行态的唯一权威记录**：完成了什么、怎么验收的、剩下的任务是什么、
 > 新会话如何接手。每批的详细修改清单见各批次文档。
 >
-> **执行状态（2026-11-17）：批次 0、0.5、1、2 已全部完成并提交。**
-> **批次 3、4、5 未开始，将在另一个会话中完成**——接手指引见文末 §5。
+> **执行状态（2026-11-17）：批次 0、0.5、1、2、3 已全部完成并提交。**
+> **批次 4、5 未开始，将在另一个会话中完成**——接手指引见文末 §5。
 
 ## 纪律（任务约定，贯穿所有批次）
 
@@ -77,6 +77,28 @@
 L7↔W9、L8↔W10、L9↔W11）在全部样例上逐文件等价，0 违反**；快照 30 条规则双侧
 0 findings。详见 [batch-2.md](batch-2.md)。
 
+### 批次 3 —— stdio MCP server ✅（rm 本批提交）
+
+1. **纯函数层下沉**：commands.rs 的 tauri 门控下沉到每个 command 包装器，
+   `*_impl` 层 tauri-free（Q11）；`apply_fix` 抽 `apply_fix_impl` 内核；
+   status 写路径校验对齐 D3 canonical 枚举。
+2. **`SaveOrigin::Agent`**（D7）：出处由版本历史 `origin=agent` 记录；
+   GUI 版本列表双语标签同步。
+3. **`mcp.rs` + `synapse-mcp` bin**：换行分隔 JSON-RPC 2.0（与 dev-kb
+   同协议）；三层工具面九工具（Q14）——read 全开 / 结构写强制 `dryRun` /
+   语义写 `propose_change` 落 `_proposals/`；私有索引
+   `indexes/<kb_id>.agent.db`；注册表只读（`--kb` 未注册时派生稳定 id）。
+4. **D7 闸门**：`save_content` 比对 `最后更新` / `下次 review`，任何改动
+   拒绝（`agent-frozen-field`）；`patch_metadata` 结构上不含这两键。
+5. **`_` 机制目录豁免**（rm validator + kaiwu check_kb + kb-spec 豁免节 +
+   dev-kb proj-mechanism fixture + 基线重冻结）：豁免校验、仍索引展示、
+   点名照查。
+6. 补键建议（batch-2 遗留 #1）：落盘响应 `hints.docCodeMissing`。
+
+验收：EditAgent 冒烟 24 项断言全 PASS（dry_run 预览 → 落盘 + origin=agent
+版本 → D7 拒绝 bump → 提案落盘 → 双校验器 0E/0W）；套件 312 绿、TS 构建绿。
+详见 [batch-3.md](batch-3.md)。
+
 ## §2 提交索引（均未 push）
 
 | 仓库 | 提交 | 内容 |
@@ -85,36 +107,31 @@ L7↔W9、L8↔W10、L9↔W11）在全部样例上逐文件等价，0 违反**�
 | rm | `07ed59e` | 批次 0（validator 三件套） |
 | rm | `73af741` | 批次 1（六项） |
 | rm | `40e18b5` | 批次 2（kb-spec + validator 规则） |
+| rm | 本批 HEAD（文档在本仓内，自引用哈希见 `git log`） | 批次 3（MCP server + 机制目录豁免） |
 | kaiwu | `75a5b3e` | 批次 0.5（门禁适配器） |
 | kaiwu | `af7b8c1` | 批次 2（check_kb 新规则） |
+| kaiwu | `83304df` | 批次 3（check_kb `_` 机制目录豁免） |
 | dev-kb | `e036620` | 批次 2（fixtures + CI job） |
+| dev-kb | `a9ae4d0` | 批次 3（frozen 副本同步 + proj-mechanism + 基线） |
 
 ## §3 未完成的任务（将在另一个会话中完成）
 
-> **批次 3、4、5 尚未开始。后续任务放到另一个会话执行**，接手指引见 §5。
-> 每批的完整定义见 [../merge-kaiwu-plan.md](../merge-kaiwu-plan.md) §3 批次 3–5 与 §5（D7/D8/D9）。
-
-### 批次 3 —— stdio MCP server（新 bin，复用 `*_impl` 纯函数层）
-
-- 三层工具面（Q14）：read 全开（list_entries / read_entry / get_graph / validate /
-  get_history）；结构写自动（save_content `origin=agent` / patch_metadata / apply_fix，
-  全部强制 `dry_run`）；语义写走提案（写 KB 内 `_proposals/`，`_` 前缀 = 机制目录）。
-- 行为规范（D7）：Agent 编辑**不碰** `最后更新` / `下次 review`；出处由 history 的
-  `origin=agent` 记录。
-- 验收：EditAgent 冒烟——经 MCP 给一篇文档补 frontmatter 键，全程 dry_run 预览 +
-  版本记录 + origin 标记。
-- 入口提示：rm 写路径已是 `*_impl` 纯函数（`commands.rs`），`write_lock` 语义要跨
-  进程保持；MCP server 建议 `src-tauri/src/bin/` 新 bin 或独立 crate（计划 §3 批次 3）。
+> **批次 4、5 尚未开始。后续任务放到另一个会话执行**，接手指引见 §5。
+> 每批的完整定义见 [../merge-kaiwu-plan.md](../merge-kaiwu-plan.md) §3 批次 4–5 与 §5（D8）。
 
 ### 批次 4 —— EditAgent / ReviewerAgent（Python 独立进程，rm `agents/`）
 
 - 行为宪章（D8 三条）：数字可追溯；被推翻表述显式化（走 supersedes/归档流程）；
-  依赖矩阵一致性（批次 2 的 L8/L9 已机器化）。
+  依赖矩阵一致性（批次 2 的 L8/L9 已机器化）；D7 继续有效
+  （MCP 层已机器化拦截 `最后更新`/`下次 review` 改动）。
+- 提案文件格式已由批次 3 定死（frontmatter + `synapse:proposal-content`
+  标记）；GUI 内的提案审阅视图（diff + 批准/驳回）在本批落地。
 - 验收：语义提案 → 人审（rm GUI 内看 diff）→ 应用，闭环跑通；全程不直接写盘。
 
 ### 批次 5 —— dev-kb 接入为 MDSearchAgent
 
-- 独立仓库不变；`projects.yaml` 已登记；三 Agent 同协议（stdio MCP）互见。
+- 独立仓库不变；`projects.yaml` 已登记；三 Agent 同协议（stdio MCP）互见
+  （rm server 协议已与 dev-kb 对齐，见批次 3）。
 - 验收：三 Agent 同协议互见；dev-kb 自身 CI（契约门禁）不受影响。
 
 ### 挂起事项（随批处理，不阻塞）
@@ -122,7 +139,10 @@ L7↔W9、L8↔W10、L9↔W11）在全部样例上逐文件等价，0 违反**�
 - kaiwu 全链路回归 PASS 待模型目录恢复（见批次 0.5 遗留）。
 - 批次 1 的 GUI 验收（编辑 + 归档演练 + check_kb 0/0）待用户在 tauri:dev 执行。
 - 三仓 push 后观察 dev-kb CI 首跑（`kb-spec-consistency` job 依赖 rm `main` 的 synapse）。
-- kaiwu 35 篇无 `文档代号` 键（M5 缺键静默）；批次 3 Agent 规范可定义补键建议。
+- 跨进程写锁未收口：GUI 与 MCP 并发改同一文件的读-改-写靠后写覆盖，
+  完整解（全部写方接同一把文件锁）待需要时单独一批（batch-3.md §已知边界）。
+- `synapse-mcp` 的 MCP 宿主登记配置（如 Claude Desktop 的 mcpServers 片段）
+  待批次 4 与 Agent 一并给出。
 
 ## §4 环境事实（跨会话有用）
 
@@ -131,6 +151,9 @@ L7↔W9、L8↔W10、L9↔W11）在全部样例上逐文件等价，0 违反**�
   `zmc576700954/dev-kb`；rm 远端 `zmc576700954/repository-manage`）。
 - rm CLI：`cd src-tauri && cargo build --bin synapse` →
   `./target/debug/synapse validate <kb> [--json]`；`SYNAPSE_TODAY` 可钉日期。
+- rm MCP server：`cd src-tauri && cargo build --bin synapse-mcp` →
+  `./target/debug/synapse-mcp --kb <path>`（换行分隔 JSON-RPC 2.0 over stdio，
+  与 dev-kb 同协议；注册表只读，`--kb` 未注册时派生 `agent-<hash>` 稳定 id）。
 - fixture 比对：`cd ~/dev-kb && python3 fixtures/kb-spec/compare.py
   --rm-repo ~/repository-manage`（frozen 模式 = CI 同款）；实时比对加
   `--kaiwu-repo ~/kaiwu`；更新基线必须 `--update-baseline --reason "..."`。
@@ -138,17 +161,22 @@ L7↔W9、L8↔W10、L9↔W11）在全部样例上逐文件等价，0 违反**�
   `SYNAPSE_BIN` 默认指向 rm 的 target/debug/synapse）。
 - kaiwu 文档格式：YAML frontmatter 四键（优先级/状态/最后更新/下次 review），
   无 `@synapse-*` 注释、无 tags；NN-MM 代号可从路径机械派生。
+- `_` 前缀路径段 = 机制目录（`_proposals/` 首例）：双侧校验器豁免、
+  仍索引展示（批次 3 定稿，规范「豁免」节有契约）。
 - 测试纪律工具链：`cargo test`（312 passed 基线）、`npm run build`（TS 严格检查）。
 
 ## §5 新会话接手指引
 
 1. **读这三份**：本文档（全局状态）→ [../merge-kaiwu-plan.md](../merge-kaiwu-plan.md)
-   §3 批次 3（任务定义）与 §5 的 D7/D8（行为宪章）→ [batch-2.md](batch-2.md) 末尾
-   的「遗留与续接点」。
+   §3 批次 4（任务定义）与 §5 的 D8（行为宪章；D7 已由批次 3 的 MCP 层
+   机器化）→ [batch-3.md](batch-3.md) 的「已知边界与遗留」与「续接点」。
 2. **验证现场**：三仓 `git log -1` 应为 §2 表末行提交；`cargo test` 312 绿；
    `SYNAPSE_TODAY=2026-11-17 ./target/debug/synapse validate ~/kaiwu/kb/kaiwu --json`
-   应 0/0/0；dev-kb `compare.py` frozen 模式应 PASS。
-3. **批次 3 开工顺序**：计划 §3 批次 3 表 → Q14 三层工具面 → D7 行为规范 →
-   实现（新 bin）→ 冒烟验收 → 更新 `merge-progress/batch-3.md`（新建）→
-   rm 单仓提交（每批一次提交的纪律不变）。
+   应 0/0/0；dev-kb `compare.py` frozen 模式应 PASS；
+   `synapse-mcp --help` 可运行。
+3. **批次 4 开工顺序**：计划 §3 批次 4 表 → D8 行为宪章 → Python Agent
+   骨架（rm `agents/`，经 `synapse-mcp` 子进程访问 KB）→ GUI 提案审阅视图
+   （按 `synapse:proposal-content-start/end` 切分 diff）→ 闭环验收 →
+   更新 `merge-progress/batch-4.md`（新建）→ rm 单仓提交（每批一次提交
+   的纪律不变）。
 4. **纪律不变**：批次间独立可回滚；针对性单元测试跑绿后删除；每批验收通过才开下一批。

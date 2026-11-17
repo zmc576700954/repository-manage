@@ -80,13 +80,25 @@ pub fn validate_kb(kb_root: &Path) -> ValidationReport {
     // E4 门控：KB 里任一条目声明了 tags 体系才启用 `type:` 前缀要求。
     let tags_system_declared = entries.iter().any(|e| e.declares_tags_system);
 
-    for entry in &entries {
+    // Q14：`_` 前缀机制目录（如 `_proposals/`）豁免规范校验，但仍留在
+    // `all_ids` 里参与链接解析（README/正文指向提案不算断链）。
+    // Q14：`_` 前缀机制目录（如 `_proposals/`）豁免规范校验，但仍留在
+    // `all_ids` 里参与链接解析（README/正文指向提案不算断链）。
+    let mut checked = entries;
+    checked.retain(|e| {
+        // RawEntry.path = 条目绝对路径（scanner walk 产物）。
+        !crate::scanner::is_mechanism_path(kb_root, &e.path)
+    });
+
+    for entry in &checked {
         let issues = rules::check_all(entry, kb_root, &all_ids, layout, tags_system_declared);
         report.issues.extend(issues);
     }
 
-    report.issues.extend(system_labels::compute_all(&entries, kb_root));
-    report.issues.extend(kb_rules::check_all(&entries, kb_root));
+    report
+        .issues
+        .extend(system_labels::compute_all(&checked, kb_root));
+    report.issues.extend(kb_rules::check_all(&checked, kb_root));
 
     report
 }

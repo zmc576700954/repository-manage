@@ -123,6 +123,7 @@
   "versionOriginRestore": "回退",
   "versionOriginExternal": "外部修改",
   "versionOriginTrim": "裁剪记录",
+  "versionOriginAgent": "Agent 写入",
   "versionRestoredFrom": "来自 {{version}}",
   "versionSummary": "+{{added}} / -{{removed}} 行",
   "versionSize": "{{size}}",

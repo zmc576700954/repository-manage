@@ -47,7 +47,7 @@ export interface FormatPreview {
   changedLines: number;
 }
 
-export type VersionOrigin = 'editor' | 'autosave' | 'format' | 'restore' | 'external' | 'trim';
+export type VersionOrigin = 'editor' | 'autosave' | 'format' | 'restore' | 'external' | 'trim' | 'agent';
 
 export interface VersionSummary {
   addedLines: number;

@@ -1,5 +1,3 @@
-#![cfg(feature = "tauri")]
-
 use crate::entry::RawEntry;
 use crate::error::{AppError, AppResult};
 use crate::index::{Index, StoredEntry};
@@ -7,6 +5,7 @@ use crate::kb_registry::KBInfo;
 use crate::state::AppState;
 use crate::validator::{self, Severity, ValidationIssue, ValidationReport};
 use std::path::{Component, Path, PathBuf};
+#[cfg(feature = "tauri")]
 use tauri::State;
 
 /// Validate that `name` is safe to use as a single filename component.
@@ -51,6 +50,7 @@ fn validate_filename(name: &str) -> AppResult<()> {
 /// 读取 KB 根目录的 README 作为「首页」内容（D6：README = KB 首页）。
 /// README 不索引为条目、不入图谱、不参与关系解析；这里只做只读展示。
 /// 大小上限 2 MiB，超限返回错误（README 不该那么大）。
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn read_kb_readme(state: State<'_, AppState>) -> AppResult<Option<String>> {
     let kb_root = kb_root_or_err(&state).await?;
@@ -134,18 +134,21 @@ fn validate_parent_group(parent_group: &str) -> AppResult<()> {
     Ok(())
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command]
 pub async fn list_kbs(state: State<'_, AppState>) -> AppResult<Vec<KBInfo>> {
     let reg = state.kbs.read().await;
     Ok(reg.list())
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command]
 pub async fn get_active_kb(state: State<'_, AppState>) -> AppResult<Option<KBInfo>> {
     let reg = state.kbs.read().await;
     Ok(reg.active().cloned())
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command]
 pub async fn add_kb(
     state: State<'_, AppState>,
@@ -170,6 +173,7 @@ pub async fn add_kb(
     Ok(info)
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command]
 pub async fn remove_kb(state: State<'_, AppState>, id: String) -> AppResult<()> {
     let was_active = {
@@ -202,11 +206,13 @@ pub async fn remove_kb(state: State<'_, AppState>, id: String) -> AppResult<()> 
     Ok(())
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command]
 pub async fn set_active_kb(state: State<'_, AppState>, id: String) -> AppResult<()> {
     load_active_kb(&state, &id).await
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command]
 pub async fn rebuild_active_kb(state: State<'_, AppState>) -> AppResult<usize> {
     let _guard = state.write_lock.lock().await;
@@ -218,6 +224,7 @@ pub async fn rebuild_active_kb(state: State<'_, AppState>) -> AppResult<usize> {
     Ok(count)
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command]
 pub async fn get_entries(state: State<'_, AppState>) -> AppResult<Vec<StoredEntry>> {
     // 等待启动 rebuild 结束（无活动 KB 或提前返回时它不会持有闸门）。
@@ -233,6 +240,7 @@ pub async fn get_entries(state: State<'_, AppState>) -> AppResult<Vec<StoredEntr
 /// （先取条目、再取指纹），中间的 watcher 重建会让两者不一致，从而把
 /// 真实的外部变更误判成自身回声丢掉。注意指纹包含正文文件的
 /// `size + mtime`，因此只改正文也会体现在里面。
+#[cfg(feature = "tauri")]
 #[tauri::command]
 pub async fn get_entries_snapshot(state: State<'_, AppState>) -> AppResult<EntriesSnapshot> {
     let _gate = state.startup_gate.read().await;
@@ -252,6 +260,7 @@ pub struct EntriesSnapshot {
     pub fingerprint: String,
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command]
 pub async fn active_kb_entry_count(state: State<'_, AppState>) -> AppResult<usize> {
     // 与 `get_entries` 同样等启动 rebuild 结束，避免首屏拿到旧计数。
@@ -261,6 +270,7 @@ pub async fn active_kb_entry_count(state: State<'_, AppState>) -> AppResult<usiz
 }
 
 /// 读取当前 KB 的节点布局（`.synapse-layout.json`）。
+#[cfg(feature = "tauri")]
 #[tauri::command]
 pub async fn get_layout(
     state: State<'_, AppState>,
@@ -273,6 +283,7 @@ pub async fn get_layout(
 /// 与其它写命令一样持有 `write_lock`，串行化 `.synapse-layout.json` 的
 /// 读-改-写（`layout_store::update_position` 内部也有一把同步锁，保证
 /// 即便绕过该命令并发调用也不会互相覆盖）。
+#[cfg(feature = "tauri")]
 #[tauri::command]
 pub async fn save_node_position(
     state: State<'_, AppState>,
@@ -286,6 +297,7 @@ pub async fn save_node_position(
     Ok(())
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command]
 pub async fn get_entry_content(
     state: State<'_, AppState>,
@@ -359,7 +371,10 @@ fn read_content(id: &str, path: &Path) -> AppResult<String> {
 ///
 /// 顺序：读旧内容 → 需要时原子替换 → 登记本地写入（抑制 watcher 的
 /// 回声刷新）→ 版本 hook（显式保存即使内容未变也会尝试记录）→ 重建索引。
-async fn write_entry_content(
+///
+/// 批次 3 起为 pub：stdio MCP server 的 `save_content` 工具以
+/// `SaveOrigin::Agent` 复用同一条管线（Q5.a / D7）。
+pub async fn write_entry_content(
     state: &AppState,
     id: &str,
     content: &str,
@@ -411,6 +426,7 @@ async fn write_entry_content(
 }
 
 /// 编辑器显式保存（按钮或 Cmd/Ctrl+S）。
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn save_entry_content(
     state: State<'_, AppState>,
@@ -429,6 +445,7 @@ pub async fn save_entry_content(
 }
 
 /// 自动保存：写盘，但版本记录受 5 分钟节流约束（在 history 层决定）。
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn autosave_entry_content(
     state: State<'_, AppState>,
@@ -460,6 +477,7 @@ async fn preview_format_impl(state: &AppState, id: &str) -> AppResult<FormatPrev
     })
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn preview_format_entry(
     state: State<'_, AppState>,
@@ -485,6 +503,7 @@ async fn apply_format_impl(state: &AppState, id: &str) -> AppResult<SaveEntryRes
     .await
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn apply_format_entry(
     state: State<'_, AppState>,
@@ -520,6 +539,7 @@ pub async fn move_entry_impl(
     execute_rename_impl(state, id, name, target_dir, true).await
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn move_entry(
     state: State<'_, AppState>,
@@ -531,6 +551,7 @@ pub async fn move_entry(
 
 // ---------- 版本历史 ----------
 
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn list_entry_versions(
     state: State<'_, AppState>,
@@ -540,6 +561,7 @@ pub async fn list_entry_versions(
     crate::history::list_versions(&runtime_dir, &id)
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn get_entry_version_content(
     state: State<'_, AppState>,
@@ -550,6 +572,7 @@ pub async fn get_entry_version_content(
     crate::history::read_version_content(&runtime_dir, &id, &version_id)
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn get_history_warnings(
     state: State<'_, AppState>,
@@ -559,6 +582,7 @@ pub async fn get_history_warnings(
     crate::history::warnings(&runtime_dir, &id)
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn preview_trim_entry_history(
     state: State<'_, AppState>,
@@ -570,6 +594,7 @@ pub async fn preview_trim_entry_history(
 }
 
 /// 手动裁剪：不可恢复，UI 必须先展示预览并二次确认。
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn trim_entry_history(
     state: State<'_, AppState>,
@@ -583,6 +608,7 @@ pub async fn trim_entry_history(
 
 /// 回退到指定版本：把旧正文写回当前文件，并追加一条带 `restored_from`
 /// 的新版本（不覆盖、不删除原版本）。
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn restore_entry_version(
     state: State<'_, AppState>,
@@ -605,6 +631,7 @@ pub async fn restore_entry_version(
     .await
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn create_relation(
     state: State<'_, AppState>,
@@ -639,6 +666,7 @@ pub async fn create_relation(
     Ok(())
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn delete_relation(
     state: State<'_, AppState>,
@@ -715,6 +743,7 @@ fn remove_wikilink_line(path: &std::path::Path, to_id: &str) -> AppResult<bool> 
 /// `relations` rows). Wikilinks inside other entries that point at this one
 /// become dangling — they will fail to resolve on the next rebuild, which is
 /// the correct behavior (the user edits those files by hand to clean up).
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn delete_entry(
     state: State<'_, AppState>,
@@ -769,6 +798,7 @@ fn append_relation_line(
 /// - `link_from_entry` 传入：源 entry 作为**上级**（关系方向 source → 新 entry，写入源 .md）
 /// - `link_to_entry` 传入：源 entry 作为**下级**（关系方向 新 entry → source，写入新 .md）
 /// 两者可同时传入（少见），分别处理双向引用。
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn create_entry_simple(
     state: State<'_, AppState>,
@@ -874,6 +904,7 @@ pub async fn create_entry_simple(
     Ok(new_id)
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn create_entry_from_reference(
     state: State<'_, AppState>,
@@ -957,6 +988,7 @@ pub async fn create_entry_from_reference(
 /// button share — keeping one report in state avoids drift between the
 /// two paths. Per plan, `validate_kb` and `run_validation` are identical
 /// today; they may diverge later (manual vs. startup trigger).
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn validate_kb(
     state: State<'_, AppState>,
@@ -971,6 +1003,7 @@ pub async fn validate_kb(
 /// "Validate this file" affordance and by per-entry edit-time checks.
 /// Returns the raw issues from the rule engine — the frontend decides
 /// how to surface them.
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn validate_entry(
     _state: State<'_, AppState>,
@@ -996,6 +1029,7 @@ pub async fn validate_entry(
 /// separately as problems, not as labels). Per spec, `get_system_labels`
 /// ignores the on-disk entry scan — the report already carries all
 /// the info we need.
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn get_system_labels(
     _state: State<'_, AppState>,
@@ -1014,6 +1048,7 @@ pub async fn get_system_labels(
 /// Startup-time validation hook. Identical to `validate_kb` today;
 /// per plan they exist separately so they can diverge later (manual
 /// vs. startup trigger path).
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn run_validation(
     state: State<'_, AppState>,
@@ -1028,6 +1063,7 @@ pub async fn run_validation(
 /// the frontend settings panel. When the file is absent, return an
 /// empty JSON object — that's the "no config yet" signal the UI uses
 /// to show defaults without forcing the user to create a file first.
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn get_kb_config(
     _state: State<'_, AppState>,
@@ -1057,6 +1093,7 @@ pub async fn get_kb_config(
 /// frontend assembles the full desired config from current values +
 /// pending edits and round-trips it here, so a fresh file with just
 /// the user's edits is exactly what we want.
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn update_kb_config(
     _state: State<'_, AppState>,
@@ -1090,6 +1127,9 @@ fn pathdiff(from_dir: &std::path::Path, to: &std::path::Path) -> String {
     to.to_string_lossy().to_string()
 }
 
+/// 仅 tauri 构建使用：KB 切换由 GUI command 驱动；MCP server 绑定单一
+/// KB（`--kb`），不参与注册表切换（无 watcher / 事件面）。
+#[cfg(feature = "tauri")]
 async fn load_active_kb(state: &AppState, kb_id: &str) -> AppResult<()> {
     // Serializes the whole switch (registry update + disk scan + index swap)
     // against other mutators. Callers do NOT pre-acquire this lock — it would
@@ -1143,6 +1183,7 @@ async fn load_active_kb(state: &AppState, kb_id: &str) -> AppResult<()> {
     Ok(())
 }
 
+#[cfg(feature = "tauri")]
 async fn clear_active_kb(state: &AppState) -> AppResult<()> {
     let _guard = state.write_lock.lock().await;
     let default_db = crate::paths::index_db_path();
@@ -1169,6 +1210,7 @@ async fn clear_active_kb(state: &AppState) -> AppResult<()> {
 /// (or `None` to drop the watcher entirely). No-op if the new root matches
 /// the watcher's current root, so a redundant KB reload doesn't churn the
 /// notify subscription. `state.write_lock` must be held by the caller.
+#[cfg(feature = "tauri")]
 fn swap_watcher(state: &AppState, new_root: Option<&std::path::Path>) {
     let mut watcher_slot = state.watcher.lock().unwrap();
     let current_root = watcher_slot.as_ref().map(|h| h.root.clone());
@@ -1237,12 +1279,25 @@ pub struct FixApplyResult {
 /// instead of going through `read_entry` (which assumes a directory
 /// containing `content.md`) or `read_md_file` (which derives its own
 /// id and would diverge from the DB's id after a rename).
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn apply_fix(
     state: State<'_, AppState>,
     entry_id: String,
     rule_id: String,
     confirm: Option<bool>,
+) -> AppResult<FixApplyResult> {
+    apply_fix_impl(&state, entry_id, rule_id, confirm.unwrap_or(false)).await
+}
+
+/// `apply_fix` command 的可复用内核（批次 3）：stdio MCP server 的
+/// `apply_fix` 工具走同一条 fix 分发 + rebuild 管线。内部持有
+/// `state.write_lock`，与 GUI 写路径互斥语义一致。
+pub async fn apply_fix_impl(
+    state: &AppState,
+    entry_id: String,
+    rule_id: String,
+    confirm: bool,
 ) -> AppResult<FixApplyResult> {
     let _guard = state.write_lock.lock().await;
 
@@ -1299,8 +1354,6 @@ pub async fn apply_fix(
         validation: vec![],
     };
 
-    let confirm = confirm.unwrap_or(false);
-
     // 4) Dispatch the fix. Unknown rule ids surface as AppError::UnknownRule.
     let descriptor = validator::fix_impls::descriptor_and_apply(
         rule_id.as_str(),
@@ -1333,6 +1386,7 @@ pub async fn apply_fix(
 /// an empty vec for a KB that has never had a fix applied (the
 /// directory is created on demand). The frontend uses this to populate
 /// the "Restore from backup" picker in the FixDrawer.
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn list_backups(
     state: State<'_, AppState>,
@@ -1348,6 +1402,7 @@ pub async fn list_backups(
 /// Takes the `write_lock` because `apply` calls do: this modifies the
 /// KB's `.md` files, and we don't want a concurrent `apply_fix` to
 /// observe half-restored state.
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn restore_backup(
     state: State<'_, AppState>,
@@ -1445,7 +1500,13 @@ pub async fn update_entry_metadata_impl(
         }
     }
     if let Some(status) = &changes.status {
-        if !["draft", "stable", "wip", "deprecated"].contains(&status.as_str()) {
+        // D3（批次 3 对齐）：canonical 中文六枚举（可带 `（注记）`，剥除后
+        // 比对，口径同 W7）或 rm 旧英文自由值均接受——GUI 存量流程写英文、
+        // kaiwu 方言与 Agent 写 canonical 值，两条路都合法。
+        let base = status.split(['（', '(']).next().unwrap_or(status).trim();
+        let legacy = ["draft", "stable", "wip", "deprecated"].contains(&status.as_str());
+        let canonical = validator::rules::STATUS_BASES.contains(&base);
+        if !legacy && !canonical {
             return Err(AppError::MetadataInvalidField {
                 field: "status".to_string(),
                 reason: format!("status '{status}' not in enum"),
@@ -1485,6 +1546,7 @@ pub async fn update_entry_metadata_impl(
 /// Tauri command wrapper for `update_entry_metadata_impl`. The
 /// frontend's `EntryMetadataEditor` calls this when a metadata field
 /// blurs. Validation rejects bad values before any file I/O.
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn update_entry_metadata(
     state: State<'_, AppState>,
@@ -1563,6 +1625,7 @@ pub async fn precheck_rename_impl(
     })
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn precheck_rename(
     state: State<'_, AppState>,
@@ -1977,6 +2040,7 @@ pub async fn execute_rename_impl(
     Ok(RenameResult { new_id, updated_files })
 }
 
+#[cfg(feature = "tauri")]
 #[tauri::command(rename_all = "camelCase")]
 pub async fn execute_rename(
     state: State<'_, AppState>,
