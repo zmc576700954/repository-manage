@@ -27,13 +27,17 @@ pub fn check_all(
     issues.extend(check_root_md_files(entry, kb_root, all_ids, layout));
     issues.extend(check_reserved_subdir_names(entry, kb_root, all_ids));
     issues.extend(check_system_labels_written_by_user(entry, kb_root, all_ids));
-    issues.extend(check_yaml_parse(entry, kb_root, all_ids));
+    // D9 清理：check_yaml_parse 是空转死规则（解析失败在 parser 层已捕获），
+    // 已删除；E8 编号缺位是历史遗留，编号不回收（见 docs/kb-spec.md 附录）。
     issues.extend(check_tag_count(entry, kb_root, all_ids));
     issues.extend(check_tag_chars(entry, kb_root, all_ids));
     issues.extend(check_broken_link_targets(entry, kb_root, all_ids));
     issues.extend(check_orphan_candidate(entry, kb_root, all_ids));
-    issues.extend(check_unused_attachments(entry, kb_root, all_ids));
+    // D9 清理：check_unused_attachments 是空转桩，已删除（声明见 docs/kb-spec.md 附录）。
     issues.extend(check_legacy_group_field(entry, kb_root, all_ids));
+    issues.extend(check_review_overdue(entry));
+    issues.extend(check_status_enum(entry));
+    issues.extend(check_doc_code_format(entry));
     // 应用 per-entry ignore
     issues.retain(|i| !entry.ignored_rules.contains(&i.rule_id));
     issues
@@ -231,15 +235,6 @@ pub fn check_system_labels_written_by_user(
     vec![]
 }
 
-pub fn check_yaml_parse(
-    _entry: &RawEntry,
-    _kb_root: &Path,
-    _all_ids: &HashSet<String>,
-) -> Vec<ValidationIssue> {
-    // YAML 解析失败已在 parser 层捕获；此处无操作
-    vec![]
-}
-
 pub fn check_tag_count(
     entry: &RawEntry,
     _kb_root: &Path,
@@ -354,15 +349,6 @@ pub fn check_orphan_candidate(
     vec![]
 }
 
-pub fn check_unused_attachments(
-    _entry: &RawEntry,
-    _kb_root: &Path,
-    _all_ids: &HashSet<String>,
-) -> Vec<ValidationIssue> {
-    // 简化版：留待未来基于实际 attachments 目录扫描
-    vec![]
-}
-
 pub fn check_legacy_group_field(
     entry: &RawEntry,
     _kb_root: &Path,
@@ -387,6 +373,154 @@ pub fn check_legacy_group_field(
         }];
     }
     vec![]
+}
+
+
+// ---------------------------------------------------------------- 批次 2 新增（kaiwu × rm 合并）
+//
+// W6/W7/W8 对应规范（docs/kb-spec.md）的 M4/M3a/M5；映射表见规范附录。
+// 都是**条件规则**：键不存在即沉默，规范 KB 与通用 KB 互不干扰。
+
+/// frontmatter 旁路键的字符串值（批次 0 的 extra_meta 是唯一来源）。
+fn extra_str(entry: &RawEntry, key: &str) -> Option<String> {
+    entry
+        .extra_meta
+        .iter()
+        .find(|m| m.key == key)
+        .map(|m| match &m.value {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            _ => String::new(),
+        })
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+}
+
+/// 校验当天（本地时区的近似：UTC 日期）。ISO 零填充格式下字符串比较即时间序。
+/// `SYNAPSE_TODAY` 环境变量可钉住日期——dev-kb CI 的 fixture 基线必须确定性
+/// （「同一份内容今天绿、三个月后黄」是运行时语义，fixture 冻结语义需要固定钟）。
+fn today_iso() -> String {
+    if let Ok(v) = std::env::var("SYNAPSE_TODAY") {
+        if is_iso_date(v.trim()) {
+            return v.trim().to_string();
+        }
+    }
+    let days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 86400)
+        .unwrap_or(0) as i64;
+    // civil-from-days（Howard Hinnant 算法）
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+fn is_iso_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 10
+        && b[0..4].iter().all(|c| c.is_ascii_digit())
+        && b[4] == b'-'
+        && b[5..7].iter().all(|c| c.is_ascii_digit())
+        && b[7] == b'-'
+        && b[8..10].iter().all(|c| c.is_ascii_digit())
+}
+
+/// W6 = 规范 M4（D4 新鲜度契约）：`下次 review` 早于校验当天 → 警告。
+/// 刻意不取 mtime——「最后更新」是人工登记的复核日期（规范 §元数据）。
+pub fn check_review_overdue(entry: &RawEntry) -> Vec<ValidationIssue> {
+    let Some(review) = extra_str(entry, "下次 review") else {
+        return vec![];
+    };
+    if !is_iso_date(&review) {
+        // `按需` 等非日期取值合法（规范允许），静默。
+        return vec![];
+    }
+    if review.as_str() < today_iso().as_str() {
+        return vec![ValidationIssue {
+            entry_id: entry.id.clone(),
+            rule_id: "W6".into(),
+            severity: Severity::Warning,
+            message: format!("下次 review 已过复审期：{review}"),
+            file_line: None,
+            ignored: false,
+        }];
+    }
+    vec![]
+}
+
+/// 规范 M3a 的状态基准值（括号注记剥离后比对）。
+pub const STATUS_BASES: [&str; 6] = ["草案", "模板", "稳定", "需持续监控", "过期", "已归档"];
+
+/// W7 = 规范 M3a（D3）：`状态`（或别名 status）存在时，基准值必须落在
+/// canonical 枚举内；`（补充说明）` 剥离后比对。键不存在 → 沉默。
+pub fn check_status_enum(entry: &RawEntry) -> Vec<ValidationIssue> {
+    let Some(status) = entry.status.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+        return vec![];
+    };
+    let base = status
+        .split(['（', '('])
+        .next()
+        .unwrap_or(status)
+        .trim();
+    if STATUS_BASES.contains(&base) {
+        return vec![];
+    }
+    vec![ValidationIssue {
+        entry_id: entry.id.clone(),
+        rule_id: "W7".into(),
+        severity: Severity::Warning,
+        message: format!(
+            "状态基准值非法：{base}（应为 {}）",
+            STATUS_BASES.join("、")
+        ),
+        file_line: None,
+        ignored: false,
+    }]
+}
+
+/// W8 = 规范 M5（Q12 文档代号第 5 键）：键存在时取值必须是 NN-MM 形态。
+/// 键缺失不报——老库渐进补齐（规范附录盲区声明）。
+pub fn check_doc_code_format(entry: &RawEntry) -> Vec<ValidationIssue> {
+    let Some(code) = extra_str(entry, "文档代号") else {
+        return vec![];
+    };
+    let ok = {
+        let b = code.as_bytes();
+        let dash = code.find('-');
+        match dash {
+            Some(i) if 1 <= i && i <= 4 => {
+                let (a, rest) = code.split_at(i);
+                let r = &rest[1..];
+                !r.is_empty()
+                    && r.len() <= 4
+                    && a.chars().all(|c| c.is_ascii_digit())
+                    && r.chars().all(|c| c.is_ascii_digit())
+                    && !code.contains("--")
+                    && b.len() == a.len() + 1 + r.len()
+            }
+            _ => false,
+        }
+    };
+    if ok {
+        return vec![];
+    }
+    vec![ValidationIssue {
+        entry_id: entry.id.clone(),
+        rule_id: "W8".into(),
+        severity: Severity::Warning,
+        message: format!("文档代号取值非法：{code:?}（应为 NN-MM 数字形态，如 02-01）"),
+        file_line: None,
+        ignored: false,
+    }]
 }
 
 #[cfg(test)]

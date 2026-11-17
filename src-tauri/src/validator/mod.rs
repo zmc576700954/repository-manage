@@ -3,6 +3,7 @@
 
 pub mod fix;
 pub mod fix_impls;
+pub mod kb_rules;
 pub mod rules;
 pub mod system_labels;
 pub mod migrator;
@@ -85,6 +86,7 @@ pub fn validate_kb(kb_root: &Path) -> ValidationReport {
     }
 
     report.issues.extend(system_labels::compute_all(&entries, kb_root));
+    report.issues.extend(kb_rules::check_all(&entries, kb_root));
 
     report
 }

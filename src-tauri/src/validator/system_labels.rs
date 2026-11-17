@@ -83,7 +83,12 @@ pub fn compute_all(entries: &[RawEntry], kb_root: &Path) -> Vec<ValidationIssue>
             .and_then(|mt| now.duration_since(*mt).ok());
 
         // I1: recently-modified (only if we have valid mtime)
-        // I3: stale (only if we have valid mtime)
+        // I3: stale（D4 新鲜度契约：条目声明了 `下次 review` 时 I3 让位——
+        //     新鲜度信号由 W6（复审过期）接管，不再按 mtime 判陈旧）
+        let has_review_date = entry
+            .extra_meta
+            .iter()
+            .any(|m| m.key == "下次 review");
         if let Some(age) = age {
             if age < SEVEN_DAYS {
                 issues.push(issue(
@@ -93,7 +98,7 @@ pub fn compute_all(entries: &[RawEntry], kb_root: &Path) -> Vec<ValidationIssue>
                 ));
             }
 
-            if age > ONE_HUNDRED_EIGHTY_DAYS {
+            if age > ONE_HUNDRED_EIGHTY_DAYS && !has_review_date {
                 issues.push(issue(
                     &entry.id,
                     "I3",
