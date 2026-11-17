@@ -1,7 +1,8 @@
 {
   "titleDetail": "Detail",
-  "titleValidation": "Validation",
-  "titleSettings": "Settings",
   "titleFilter": "Filter",
-  "titleHome": "KB homepage"
+  "titleHome": "KB homepage",
+  "titleProposals": "Proposals",
+  "titleSettings": "Settings",
+  "titleValidation": "Validation"
 }

@@ -192,6 +192,13 @@ export function Sidebar() {
               {t('homeButton')}
             </button>
             <button
+              onClick={() => openPanel('proposals')}
+              className="mt-2 w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-50"
+              title={t('proposalsTitle')}
+            >
+              {t('proposalsButton')}
+            </button>
+            <button
               onClick={() => loadEntries()}
               className="mt-2 w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-50"
               title={t('reloadTitle')}

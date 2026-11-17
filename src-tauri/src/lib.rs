@@ -12,6 +12,8 @@ pub mod layout_store;
 pub mod mcp;
 pub mod parser;
 pub mod paths;
+/// 语义提案机制目录（批次 4）：`_proposals/` 解析/状态/审阅，GUI 与 MCP 共用。
+pub mod proposals;
 pub mod scanner;
 pub mod state;
 pub mod validator;
@@ -298,6 +300,10 @@ pub fn run() {
             commands::update_entry_metadata,
             commands::precheck_rename,
             commands::execute_rename,
+            commands::list_proposals,
+            commands::read_proposal,
+            commands::apply_proposal,
+            commands::dismiss_proposal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

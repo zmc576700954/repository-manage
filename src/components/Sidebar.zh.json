@@ -1,14 +1,16 @@
 {
-  "noKbTitle": "没有激活的知识库",
-  "noKbPath": "在「知识库」中添加一个",
-  "reloadButton": "↻ 从磁盘重载",
-  "reloadTitle": "从磁盘重新读取条目",
+  "createChildTitle": "为「{{title}}」创建下级文档",
+  "createInGroupTitle": "在「{{path}}」下创建新文档",
+  "createInRootTitle": "在 KB 根目录创建新文档",
+  "emptyKb": "该知识库里还没有 entry。点上方 ＋ 创建第一个。",
   "homeButton": "📖 KB 首页",
   "homeTitle": "打开知识库首页（根 README）",
-  "createInRootTitle": "在 KB 根目录创建新文档",
-  "createInGroupTitle": "在「{{path}}」下创建新文档",
-  "createChildTitle": "为「{{title}}」创建下级文档",
   "manageKbTitle": "管理知识库",
-  "emptyKb": "该知识库里还没有 entry。点上方 ＋ 创建第一个。",
-  "noKbYet": "没有激活的知识库。点击右上 ⚙ 添加一个。"
+  "noKbPath": "在「知识库」中添加一个",
+  "noKbTitle": "没有激活的知识库",
+  "noKbYet": "没有激活的知识库。点击右上 ⚙ 添加一个。",
+  "proposalsButton": "📋 语义提案",
+  "proposalsTitle": "查看并审阅 Agent 的语义提案（_proposals/）",
+  "reloadButton": "↻ 从磁盘重载",
+  "reloadTitle": "从磁盘重新读取条目"
 }

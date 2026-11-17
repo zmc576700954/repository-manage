@@ -222,3 +222,24 @@ pub fn has_key(content: &str, key: &str) -> bool {
         .iter()
         .any(|l| top_level_key(l).as_deref() == Some(key))
 }
+
+/// frontmatter 区块内某顶层键的单行标量值（`key: value` 的 value 部分，
+/// 去首尾空白）。只认区块内顶层键行，嵌套/注释行不误读。
+/// 批次 4 起 pub：D7 冻结键比对（mcp save_content 与 GUI apply_proposal
+/// 共用同一口径）。
+pub fn scalar_value(content: &str, key: &str) -> Option<String> {
+    let lines: Vec<&str> = content.split('\n').collect();
+    let (start, end) = locate_block(&lines)?;
+    for line in &lines[start + 1..end] {
+        let trimmed = line.trim_end();
+        if trimmed.starts_with(' ') || trimmed.starts_with('\t') || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(colon) = trimmed.find(':') {
+            if trimmed[..colon].trim() == key {
+                return Some(trimmed[colon + 1..].trim().to_string());
+            }
+        }
+    }
+    None
+}

@@ -1,0 +1,20 @@
+{
+  "count": "{{count}} proposal(s)",
+  "reload": "Refresh",
+  "empty": "No semantic proposals yet. EditAgent writes them here via MCP propose_change.",
+  "status_pending": "Pending",
+  "status_reviewed": "Reviewed",
+  "status_applied": "Applied",
+  "status_rejected": "Rejected",
+  "verdict_pass": "pass",
+  "verdict_needs-attention": "needs attention",
+  "targetLabel": "Target entry",
+  "targetUnresolved": "Target cannot be resolved (proposal target ambiguous or missing)",
+  "reviewLabel": "ReviewerAgent report",
+  "noContentBlock": "This proposal has no content block (rationale-only); nothing to apply.",
+  "noCurrentContent": "Failed to read the target entry; cannot render the diff.",
+  "diffSummary": "Proposal adds {{added}} / removes {{removed}} lines",
+  "applyButton": "Approve & apply",
+  "dismissButton": "Reject",
+  "applyHint": "Apply = write to the target entry and record an origin=agent version"
+}

@@ -21,3 +21,4 @@ synapse-kb-*.tar.gz
 
 # Superpowers brainstorm session (visual companion artifacts)
 .superpowers/
+__pycache__/

@@ -15,6 +15,7 @@ const TITLE_KEY: Record<PanelType, string> = {
   filter: 'titleFilter',
   fix: 'titleFix',
   home: 'titleHome',
+  proposals: 'titleProposals',
 };
 
 export const RightPanel: React.FC<Props> = ({ type, onClose, children }) => {

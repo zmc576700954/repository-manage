@@ -111,6 +111,35 @@ export interface Entry {
   warningCount?: number;
 }
 
+// ---------- 批次 4：语义提案审阅（_proposals/ 闭环的 GUI 侧） ----------
+
+/** 单条语义提案的元数据。Mirrors `proposals::ProposalMeta`（camelCase）。 */
+export interface ProposalMeta {
+  id: string;
+  target: string;
+  status: string;
+  created: string | null;
+  origin: string | null;
+  rationale: string | null;
+}
+
+/** `read_proposal` 的返回（含 diff 所需的两侧全文与审阅报告）。 */
+export interface ProposalDetail extends ProposalMeta {
+  raw: string;
+  content: string | null;
+  review: string | null;
+  targetId: string | null;
+  currentContent: string | null;
+}
+
+/** `apply_proposal` 的返回。Mirrors `commands::ApplyProposalResult`。 */
+export interface ApplyProposalResult {
+  proposalId: string;
+  entryId: string;
+  changed: boolean;
+  version: VersionMeta | null;
+}
+
 /// Shape returned by the backend's `get_entries` /
 /// `update_entry_metadata` calls. Mirrors `index::StoredEntry` on the
 /// Rust side (camelCase serialized). Has additional fields beyond

@@ -1,0 +1,20 @@
+{
+  "count": "{{count}} 条提案",
+  "reload": "刷新",
+  "empty": "还没有语义提案。EditAgent 经 MCP 的 propose_change 会把提案写到这里。",
+  "status_pending": "待审",
+  "status_reviewed": "已出审阅报告",
+  "status_applied": "已应用",
+  "status_rejected": "已驳回",
+  "verdict_pass": "通过",
+  "verdict_needs-attention": "需关注",
+  "targetLabel": "目标条目",
+  "targetUnresolved": "目标无法解析（提案 target 不唯一或不存在）",
+  "reviewLabel": "ReviewerAgent 审阅报告",
+  "noContentBlock": "该提案没有内容块（纯说明提案），无可应用。",
+  "noCurrentContent": "目标条目内容读取失败，无法渲染 diff。",
+  "diffSummary": "提案新增 {{added}} 行 / 删除 {{removed}} 行",
+  "applyButton": "批准并应用",
+  "dismissButton": "驳回",
+  "applyHint": "应用 = 写入目标条目并记录 origin=agent 版本"
+}

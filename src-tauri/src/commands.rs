@@ -1428,6 +1428,188 @@ pub async fn restore_backup(
     Ok(())
 }
 
+// ---------- Semantic proposals（批次 4：GUI 提案审阅闭环） ----------
+
+/// 提案列表条目（透传 proposals::ProposalMeta）。
+#[cfg(feature = "tauri")]
+#[tauri::command]
+pub async fn list_proposals(state: State<'_, AppState>) -> AppResult<Vec<crate::proposals::ProposalMeta>> {
+    let kb_root = kb_root_or_err(&state).await?;
+    crate::proposals::list_proposals(&kb_root)
+}
+
+/// 提案详情：meta + 内容块 + 审阅报告 + 目标条目当前全文（供 GUI 渲染 diff）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProposalDetail {
+    #[serde(flatten)]
+    pub proposal: crate::proposals::Proposal,
+    /// 内容块里声称的目标在索引中的解析结果；None = 解析失败（GUI 提示）。
+    pub target_id: Option<String>,
+    /// 目标条目当前全文；解析失败或文件缺失时为 None。
+    pub current_content: Option<String>,
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command(rename_all = "camelCase")]
+pub async fn read_proposal(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<ProposalDetail> {
+    let kb_root = kb_root_or_err(&state).await?;
+    let proposal = crate::proposals::read_proposal(&kb_root, &id)?;
+    let (target_id, current_content) = {
+        let idx = state.index.read().await;
+        match resolve_proposal_target(&idx, &proposal.meta.target) {
+            Some(tid) => {
+                let content = idx
+                    .get_entry_content_path(&tid)?
+                    .and_then(|p| std::fs::read_to_string(p).ok());
+                (Some(tid), content)
+            }
+            None => (None, None),
+        }
+    };
+    Ok(ProposalDetail {
+        proposal,
+        target_id,
+        current_content,
+    })
+}
+
+/// 提案 `target` → 索引条目 id。先按 id 精确查，再按 content_path 唯一
+/// 后缀匹配（批次 3 的 propose_change 示例以相对路径为 target）。
+fn resolve_proposal_target(idx: &Index, target: &str) -> Option<String> {
+    if idx.get_entry_content_path(target).ok().flatten().is_some() {
+        return Some(target.to_string());
+    }
+    let normalized = target.replace('\\', "/");
+    let entries = idx.get_all_entries().ok()?;
+    let mut hits = entries
+        .into_iter()
+        .filter(|e| e.content_path.replace('\\', "/").ends_with(&normalized))
+        .map(|e| e.id);
+    let first = hits.next()?;
+    if hits.next().is_some() {
+        return None; // 多义 → 拒绝，宁可让人改 target 也不猜
+    }
+    Some(first)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyProposalResult {
+    pub proposal_id: String,
+    pub entry_id: String,
+    /// 内容与磁盘一致（重复应用同一提案）时为 false。
+    pub changed: bool,
+    pub version: Option<crate::history::VersionMeta>,
+}
+
+/// 批准并应用提案（批次 4 闭环的「应用」步）：把提案内容块经
+/// `write_entry_content` 写入目标条目——原子替换 + `origin=agent` 版本
+/// 记录（内容出自 Agent，人只做批准）+ rebuild，然后翻转提案 status。
+/// D7 闸门与 MCP `save_content` 同口径：提案全文改动 `最后更新` /
+/// `下次 review` 一律拒绝。
+pub async fn apply_proposal_impl(
+    state: &AppState,
+    id: String,
+) -> AppResult<ApplyProposalResult> {
+    let kb_root = kb_root_or_err(state).await?;
+    let proposal = crate::proposals::read_proposal(&kb_root, &id)?;
+    let Some(proposed) = proposal.content else {
+        return Err(AppError::Other {
+            message: format!("proposal {} has no content block", id),
+        });
+    };
+    let entry_id = {
+        let idx = state.index.read().await;
+        resolve_proposal_target(&idx, &proposal.meta.target).ok_or_else(|| {
+            AppError::Other {
+                message: format!(
+                    "proposal {}: target '{}' 不唯一或不存在，请修正提案后重新提交",
+                    id, proposal.meta.target
+                ),
+            }
+        })?
+    };
+    let path = {
+        let idx = state.index.read().await;
+        idx.get_entry_content_path(&entry_id)?.ok_or_else(|| {
+            AppError::EntryNotFound { id: entry_id.clone() }
+        })?
+    };
+    let current = std::fs::read_to_string(&path).map_err(|e| {
+        AppError::io(format!("apply_proposal: read {}", path.display()), e)
+    })?;
+
+    // D7：Agent 起草的全文不许代 bump 人工复审日期（人批准也不行——
+    // 复审日期要由人在编辑器里自己 bump）。
+    let frozen = crate::mcp::frozen_field_violations(&current, &proposed);
+    if !frozen.is_empty() {
+        return Err(AppError::AgentFrozenField {
+            keys: frozen.join("、"),
+        });
+    }
+
+    let _guard = state.write_lock.lock().await;
+    let result = if current == proposed {
+        crate::commands::SaveEntryResult {
+            changed: false,
+            bytes: proposed.len(),
+            saved_at_ms: now_ms(),
+            content: proposed.clone(),
+        }
+    } else {
+        write_entry_content(
+            state,
+            &entry_id,
+            &proposed,
+            crate::history::SaveOrigin::Agent,
+            None,
+        )
+        .await?
+    };
+    crate::proposals::set_status(&kb_root, &id, crate::proposals::STATUS_APPLIED)?;
+
+    // 版本元数据从历史里取最新 agent 记录（重复应用时为上一次的）。
+    let runtime_dir = runtime_dir_or_err(state).await?;
+    let version = crate::history::list_versions(&runtime_dir, &entry_id)
+        .ok()
+        .and_then(|versions| {
+            versions
+                .into_iter()
+                .rev()
+                .find(|v| v.origin == crate::history::SaveOrigin::Agent)
+        });
+    Ok(ApplyProposalResult {
+        proposal_id: id,
+        entry_id,
+        changed: result.changed,
+        version,
+    })
+}
+
+#[cfg(feature = "tauri")]
+#[tauri::command(rename_all = "camelCase")]
+pub async fn apply_proposal(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<ApplyProposalResult> {
+    apply_proposal_impl(&state, id).await
+}
+
+/// 驳回提案：只翻 status（文件保留在 `_proposals/` 作审计痕迹）。
+#[cfg(feature = "tauri")]
+#[tauri::command(rename_all = "camelCase")]
+pub async fn dismiss_proposal(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<()> {
+    let kb_root = kb_root_or_err(&state).await?;
+    crate::proposals::set_status(&kb_root, &id, crate::proposals::STATUS_REJECTED)
+}
+
 // ---------- Inline metadata editing (Cycle 2, Task 6) ----------
 
 /// Update one or more `@synapse-*` fields in a content.md file. The

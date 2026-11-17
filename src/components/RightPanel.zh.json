@@ -1,7 +1,8 @@
 {
   "titleDetail": "详情",
-  "titleValidation": "校验",
-  "titleSettings": "设置",
   "titleFilter": "筛选",
-  "titleHome": "KB 首页"
+  "titleHome": "KB 首页",
+  "titleProposals": "提案审阅",
+  "titleSettings": "设置",
+  "titleValidation": "校验"
 }

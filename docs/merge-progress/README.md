@@ -4,8 +4,8 @@
 > **本文档是执行态的唯一权威记录**：完成了什么、怎么验收的、剩下的任务是什么、
 > 新会话如何接手。每批的详细修改清单见各批次文档。
 >
-> **执行状态（2026-11-17）：批次 0、0.5、1、2、3 已全部完成并提交。**
-> **批次 4、5 未开始，将在另一个会话中完成**——接手指引见文末 §5。
+> **执行状态（2026-11-17）：批次 0、0.5、1、2、3、4 已全部完成并提交。**
+> **批次 5 未开始，将在另一个会话中完成**——接手指引见文末 §5。
 
 ## 纪律（任务约定，贯穿所有批次）
 
@@ -99,6 +99,26 @@ L7↔W9、L8↔W10、L9↔W11）在全部样例上逐文件等价，0 违反**�
 版本 → D7 拒绝 bump → 提案落盘 → 双校验器 0E/0W）；套件 312 绿、TS 构建绿。
 详见 [batch-3.md](batch-3.md)。
 
+### 批次 4 —— EditAgent / ReviewerAgent + GUI 提案审阅闭环 ✅（rm 本批提交）
+
+1. **rm `agents/`**（Python 独立进程，纯标准库，无 LLM SDK）：`mcp_client.py`
+   （stdio MCP 客户端）、`edit_agent.py`（结构写自动 dry_run 落盘 /
+   正文语义改动出提案；确定性 edit ops 或 `llm_cmd` 外挂生成器）、
+   `reviewer_agent.py`（D8 三条：数字可追溯【仅新增行】、被推翻表述
+   显式化、依赖矩阵一致性【经 validate】；审阅经 MCP `review_proposal`
+   落报告）、`README.md`（行为宪章 + 闭环图 + 用法）。
+2. **提案命令层**：新模块 `proposals.rs`（解析/列举/状态/审阅，GUI 与
+   MCP 共用）+ 四个 Tauri 命令（list/read/apply/dismiss）；
+   `apply_proposal` 带 D7 闸门（Agent 起草全文 bump 复审日期连人批准也拦）
+   并以 origin=agent 记版本；mcp.rs 增第 10 个工具 `review_proposal`。
+3. **GUI 提案审阅面板**：`📋 语义提案`（列表 status 徽标 → 审阅报告 +
+   行级 LCS diff → 批准应用 / 驳回），i18n 双语成对。
+
+验收：kaiwu 副本闭环跑通——EditAgent 出提案 → ReviewerAgent verdict=pass
+（反向：凭印象的 99.9 → needs-attention；D7 反向：本地预检拒绝）→
+apply 落盘 origin=agent（Rust 测试路径）→ 双校验器 0E/0W；套件 312 绿、
+TS 构建绿。GUI 人审步骤在 [batch-4.md](batch-4.md) §GUI，待用户执行。
+
 ## §2 提交索引（均未 push）
 
 | 仓库 | 提交 | 内容 |
@@ -108,6 +128,7 @@ L7↔W9、L8↔W10、L9↔W11）在全部样例上逐文件等价，0 违反**�
 | rm | `73af741` | 批次 1（六项） |
 | rm | `40e18b5` | 批次 2（kb-spec + validator 规则） |
 | rm | 本批 HEAD（文档在本仓内，自引用哈希见 `git log`） | 批次 3（MCP server + 机制目录豁免） |
+| rm | 本批 HEAD | 批次 4（agents/ 双 Agent + 提案命令层 + GUI 审阅面板） |
 | kaiwu | `75a5b3e` | 批次 0.5（门禁适配器） |
 | kaiwu | `af7b8c1` | 批次 2（check_kb 新规则） |
 | kaiwu | `83304df` | 批次 3（check_kb `_` 机制目录豁免） |
@@ -116,33 +137,27 @@ L7↔W9、L8↔W10、L9↔W11）在全部样例上逐文件等价，0 违反**�
 
 ## §3 未完成的任务（将在另一个会话中完成）
 
-> **批次 4、5 尚未开始。后续任务放到另一个会话执行**，接手指引见 §5。
-> 每批的完整定义见 [../merge-kaiwu-plan.md](../merge-kaiwu-plan.md) §3 批次 4–5 与 §5（D8）。
-
-### 批次 4 —— EditAgent / ReviewerAgent（Python 独立进程，rm `agents/`）
-
-- 行为宪章（D8 三条）：数字可追溯；被推翻表述显式化（走 supersedes/归档流程）；
-  依赖矩阵一致性（批次 2 的 L8/L9 已机器化）；D7 继续有效
-  （MCP 层已机器化拦截 `最后更新`/`下次 review` 改动）。
-- 提案文件格式已由批次 3 定死（frontmatter + `synapse:proposal-content`
-  标记）；GUI 内的提案审阅视图（diff + 批准/驳回）在本批落地。
-- 验收：语义提案 → 人审（rm GUI 内看 diff）→ 应用，闭环跑通；全程不直接写盘。
+> **批次 5 尚未开始。后续任务放到另一个会话执行**，接手指引见 §5。
+> 每批的完整定义见 [../merge-kaiwu-plan.md](../merge-kaiwu-plan.md) §3 批次 5。
 
 ### 批次 5 —— dev-kb 接入为 MDSearchAgent
 
 - 独立仓库不变；`projects.yaml` 已登记；三 Agent 同协议（stdio MCP）互见
-  （rm server 协议已与 dev-kb 对齐，见批次 3）。
+  （rm server 协议已与 dev-kb 对齐，见批次 3；EditAgent/ReviewerAgent 见
+  批次 4 `agents/`）。
 - 验收：三 Agent 同协议互见；dev-kb 自身 CI（契约门禁）不受影响。
 
 ### 挂起事项（随批处理，不阻塞）
 
 - kaiwu 全链路回归 PASS 待模型目录恢复（见批次 0.5 遗留）。
 - 批次 1 的 GUI 验收（编辑 + 归档演练 + check_kb 0/0）待用户在 tauri:dev 执行。
+- 批次 4 的 GUI 人审步骤（提案面板看 diff → 批准/驳回）待用户在 tauri:dev 执行
+  （[batch-4.md](batch-4.md) §GUI 人审步骤）。
 - 三仓 push 后观察 dev-kb CI 首跑（`kb-spec-consistency` job 依赖 rm `main` 的 synapse）。
 - 跨进程写锁未收口：GUI 与 MCP 并发改同一文件的读-改-写靠后写覆盖，
   完整解（全部写方接同一把文件锁）待需要时单独一批（batch-3.md §已知边界）。
-- `synapse-mcp` 的 MCP 宿主登记配置（如 Claude Desktop 的 mcpServers 片段）
-  待批次 4 与 Agent 一并给出。
+- 提案 apply 前的目标漂移检测（目标条目在审阅期间被改时提示）——
+  加固项（batch-4.md §已知边界 #2）。
 
 ## §4 环境事实（跨会话有用）
 
@@ -168,15 +183,15 @@ L7↔W9、L8↔W10、L9↔W11）在全部样例上逐文件等价，0 违反**�
 ## §5 新会话接手指引
 
 1. **读这三份**：本文档（全局状态）→ [../merge-kaiwu-plan.md](../merge-kaiwu-plan.md)
-   §3 批次 4（任务定义）与 §5 的 D8（行为宪章；D7 已由批次 3 的 MCP 层
-   机器化）→ [batch-3.md](batch-3.md) 的「已知边界与遗留」与「续接点」。
+   §3 批次 5（任务定义）→ [batch-4.md](batch-4.md) 的「已知边界与遗留」
+   与「续接点」。
 2. **验证现场**：三仓 `git log -1` 应为 §2 表末行提交；`cargo test` 312 绿；
    `SYNAPSE_TODAY=2026-11-17 ./target/debug/synapse validate ~/kaiwu/kb/kaiwu --json`
    应 0/0/0；dev-kb `compare.py` frozen 模式应 PASS；
    `synapse-mcp --help` 可运行。
-3. **批次 4 开工顺序**：计划 §3 批次 4 表 → D8 行为宪章 → Python Agent
-   骨架（rm `agents/`，经 `synapse-mcp` 子进程访问 KB）→ GUI 提案审阅视图
-   （按 `synapse:proposal-content-start/end` 切分 diff）→ 闭环验收 →
-   更新 `merge-progress/batch-4.md`（新建）→ rm 单仓提交（每批一次提交
-   的纪律不变）。
+3. **批次 5 开工顺序**：计划 §3 批次 5 表 → dev-kb 侧编排（三 Agent 同协议
+   互见：MDSearchAgent 只读 ↔ rm `synapse-mcp` 读写 ↔ `agents/` 双 Agent）→
+   dev-kb 自身 CI 契约门禁不动的确认 → 互见验收 →
+   更新 `merge-progress/batch-5.md`（新建）→ 涉及仓库各自单仓提交
+   （每批一次提交的纪律不变）。
 4. **纪律不变**：批次间独立可回滚；针对性单元测试跑绿后删除；每批验收通过才开下一批。

@@ -49,8 +49,9 @@ const DEFAULT_PROTOCOL_VERSION: &str = "2025-06-18";
 const SERVER_NAME: &str = "synapse-kb";
 const SERVER_VERSION: &str = "0.1.0";
 
-/// D7：Agent 不许代 bump 的人工复审元数据键。
-const AGENT_FROZEN_KEYS: [&str; 2] = ["最后更新", "下次 review"];
+/// D7：Agent 不许代 bump 的人工复审元数据键。批次 4 起 pub：
+/// GUI `apply_proposal` 应用 Agent 起草的全文时用同一张冻结清单。
+pub const AGENT_FROZEN_KEYS: [&str; 2] = ["最后更新", "下次 review"];
 
 /// 提案正文的定界标记（批次 4 的 GUI 审阅 / EditAgent 应用按此切分）。
 pub const PROPOSAL_CONTENT_START: &str = "<!-- synapse:proposal-content-start -->";
@@ -160,6 +161,21 @@ fn tool_definitions() -> Value {
                 "content": {"type": "string"},
             },
             "required": ["target", "rationale"],
+            "additionalProperties": false,
+        },
+    },
+    {
+        "name": "review_proposal",
+        "description": "语义写（批次 4）：ReviewerAgent 把审阅结论写入 `_proposals/<id>.review.md` 并把提案 status 翻为 reviewed。verdict 只接受 pass / needs-attention；notes 是 D8 三条（数字可追溯/被推翻表述显式化/依赖矩阵一致性）的逐条结论。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "proposalId": {"type": "string", "minLength": 1},
+                "verdict": {"type": "string", "enum": ["pass", "needs-attention"]},
+                "notes": {"type": "string", "minLength": 1},
+                "dryRun": {"type": "boolean"},
+            },
+            "required": ["proposalId", "verdict", "notes", "dryRun"],
             "additionalProperties": false,
         },
     },
@@ -407,6 +423,7 @@ impl McpServer {
             "patch_metadata" => self.tool_patch_metadata(args).await,
             "apply_fix" => self.tool_apply_fix(args).await,
             "propose_change" => self.tool_propose_change(args),
+            "review_proposal" => self.tool_review_proposal(args),
             other => Err(format!("未知工具: {other}")),
         }
     }
@@ -743,6 +760,47 @@ impl McpServer {
             "status": "pending",
         }))
     }
+
+    /// ReviewerAgent 的审阅落点（批次 4）：写 `<id>.review.md` + 翻提案
+    /// status。审阅也走 MCP——「Agent 不直接碰盘」对审阅同样成立。
+    fn tool_review_proposal(&self, args: &Value) -> Result<Value, String> {
+        let proposal_id = Self::require_str(args, "proposalId")?.to_string();
+        let verdict = Self::require_str(args, "verdict")?.to_string();
+        if verdict != "pass" && verdict != "needs-attention" {
+            return Err(format!(
+                "参数错误: verdict 只接受 pass / needs-attention，得到 {verdict}"
+            ));
+        }
+        let notes = Self::require_str(args, "notes")?.to_string();
+        let dry_run = Self::require_dry_run(args)?;
+
+        // 先读提案：不存在即报错；顺带给预览附上当前 status。
+        let proposal = crate::proposals::read_proposal(&self.kb_root, &proposal_id)
+            .map_err(|e| e.to_string())?;
+        if dry_run {
+            return Ok(json!({
+                "dryRun": true,
+                "proposalId": proposal_id,
+                "currentStatus": proposal.meta.status,
+                "reviewPath": format!("{}/{}.review.md", crate::proposals::PROPOSALS_DIR, proposal_id),
+                "verdict": verdict,
+            }));
+        }
+        let review_path = crate::proposals::write_review(
+            &self.kb_root,
+            &proposal_id,
+            &verdict,
+            &notes,
+        )
+        .map_err(|e| e.to_string())?;
+        eprintln!("[mcp] review written: {}", review_path.display());
+        Ok(json!({
+            "dryRun": false,
+            "proposalId": proposal_id,
+            "reviewPath": review_path.to_string_lossy(),
+            "status": crate::proposals::STATUS_REVIEWED,
+        }))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -752,29 +810,13 @@ impl McpServer {
 /// frontmatter 区块内某顶层键的单行标量值（`key: value` 的 value 部分）。
 /// `最后更新` / `下次 review` 都是单行日期，行级提取足够精确。
 fn frontmatter_scalar(content: &str, key: &str) -> Option<String> {
-    let lines: Vec<&str> = content.split('\n').collect();
-    let start = lines.iter().position(|l| l.trim() == "---")?;
-    let end = lines[start + 1..]
-        .iter()
-        .position(|l| l.trim() == "---")
-        .map(|i| i + start + 1)?;
-    for line in &lines[start + 1..end] {
-        let trimmed = line.trim_end();
-        if trimmed.starts_with(' ') || trimmed.starts_with('\t') || trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some(colon) = trimmed.find(':') {
-            if trimmed[..colon].trim() == key {
-                return Some(trimmed[colon + 1..].trim().to_string());
-            }
-        }
-    }
-    None
+    // 委托 fm_writer 的共享实现（批次 4 起 GUI apply_proposal 同口径）。
+    crate::parser::fm_writer::scalar_value(content, key)
 }
 
 /// D7 闸门：`previous → next` 之间冻结键的值发生变化（含新增/删除）时，
-/// 返回被改动的键名列表。
-fn frozen_field_violations(previous: &str, next: &str) -> Vec<String> {
+/// 返回被改动的键名列表。批次 4 起 pub：GUI apply_proposal 共用。
+pub fn frozen_field_violations(previous: &str, next: &str) -> Vec<String> {
     AGENT_FROZEN_KEYS
         .iter()
         .filter(|k| frontmatter_scalar(previous, k) != frontmatter_scalar(next, k))
