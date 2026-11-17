@@ -74,7 +74,12 @@ def overturned_expressions(current: str, proposed: str) -> list[str]:
     ]
 
 
-def review_proposal(client: SynapseMcpClient, proposal_id: str) -> dict:
+def review_proposal(
+    client: SynapseMcpClient,
+    proposal_id: str,
+    mdsearch_agent: "MdSearchAgent | None" = None,
+    mdsearch_project: str | None = None,
+) -> dict:
     # 提案是机制目录里的被索引文件 → 经 read_entry 读（Agent 只走 MCP）。
     detail = client.call("read_entry", id=proposal_id)
     raw = detail["content"]
@@ -108,6 +113,27 @@ def review_proposal(client: SynapseMcpClient, proposal_id: str) -> dict:
             report_lines.append("- 无新增行（纯删改提案），数字追溯不适用")
         else:
             confirmed, unconfirmed = number_traceability(added_text, rationale, corpus)
+            # 批次 5：MDSearchAgent 二次检索——KB 语料追不到的数字，在
+            # dev-kb 索引的全库（含 kaiwu 的 scripts/evals 等工程侧语料）
+            # 里再找一次出处；找到则补溯源，仍找不到才标「未确认」。
+            if unconfirmed and mdsearch_agent is not None:
+                try:
+                    hits = mdsearch_agent.search(rationale or added_text[:120], project=mdsearch_project, limit=5)
+                    for h in hits:
+                        try:
+                            src = mdsearch_agent.read_source(h["project"], h["path"])
+                            text = src.get("content") or src.get("text") or json.dumps(src, ensure_ascii=False)
+                            corpus[f"MDSearch:{h['project']}/{h['path']}"] = str(text)
+                        except Exception:
+                            continue
+                except Exception as exc:
+                    report_lines.append(f"- （MDSearchAgent 检索不可用：{exc}）")
+                confirmed2, unconfirmed = number_traceability(added_text, rationale, corpus)
+                confirmed = confirmed + [
+                    c for c in confirmed2 if c not in confirmed
+                ]
+                if confirmed2 and not unconfirmed:
+                    report_lines.append("- （部分出处由 MDSearchAgent 检索补齐）")
             for c in confirmed:
                 report_lines.append(f"- ✅ {c}")
             for n in unconfirmed:
@@ -167,26 +193,51 @@ def main() -> int:
     parser.add_argument("--proposal", default=None, help="单个提案 id；缺省配合 --all")
     parser.add_argument("--all", action="store_true", help="审阅全部 pending 提案")
     parser.add_argument("--bin", type=Path, default=None)
+    parser.add_argument(
+        "--mdsearch", action="store_true",
+        help="KB 语料追不到的数字，经 MDSearchAgent（dev-kb 只读检索）二次溯源",
+    )
+    parser.add_argument(
+        "--mdsearch-project", default=None,
+        help="dev-kb 侧的项目名（如 kaiwu / repository-manage）",
+    )
+    parser.add_argument("--devkb-repo", type=Path, default=None)
+    parser.add_argument(
+        "--mdsearch-timeout", type=int, default=None,
+        help="search 超时秒数（检索引擎冷启动/模型缺失时的降级闸）",
+    )
     args = parser.parse_args()
     if not args.all and not args.proposal:
         parser.error("需要 --proposal <id> 或 --all")
 
     kwargs = {"bin_path": args.bin} if args.bin else {}
-    with SynapseMcpClient(args.kb, **kwargs) as client:
-        if args.proposal:
-            targets = [args.proposal]
-        else:
-            # pending 提案 = 索引里 _proposals/ 下的条目（机制目录被索引但仍豁免校验）。
-            targets = [
-                e["id"]
-                for e in client.call("list_entries")["entries"]
-                if "_proposals/" in e["contentPath"].replace("\\", "/")
-                and _scalar(client.call("read_entry", id=e["id"])["content"], "status") == "pending"
+    mdsearch_agent = None
+    if args.mdsearch:
+        from mdsearch import MdSearchAgent, DEFAULT_DEVKB
+        mdsearch_kwargs = {"search_timeout_s": args.mdsearch_timeout} if args.mdsearch_timeout else {}
+        mdsearch_agent = MdSearchAgent(args.devkb_repo or DEFAULT_DEVKB, **mdsearch_kwargs)
+    try:
+        with SynapseMcpClient(args.kb, **kwargs) as client:
+            if args.proposal:
+                targets = [args.proposal]
+            else:
+                # pending 提案 = 索引里 _proposals/ 下的条目（机制目录被索引但仍豁免校验）。
+                targets = [
+                    e["id"]
+                    for e in client.call("list_entries")["entries"]
+                    if "_proposals/" in e["contentPath"].replace("\\", "/")
+                    and _scalar(client.call("read_entry", id=e["id"])["content"], "status") == "pending"
+                ]
+            if not targets:
+                print(json.dumps({"reviewed": [], "note": "没有待审提案"}, ensure_ascii=False))
+                return 0
+            results = [
+                review_proposal(client, tid, mdsearch_agent, args.mdsearch_project)
+                for tid in targets
             ]
-        if not targets:
-            print(json.dumps({"reviewed": [], "note": "没有待审提案"}, ensure_ascii=False))
-            return 0
-        results = [review_proposal(client, tid) for tid in targets]
+    finally:
+        if mdsearch_agent is not None:
+            mdsearch_agent.close()
     print(json.dumps({"reviewed": results}, ensure_ascii=False))
     return 0
 

@@ -83,12 +83,14 @@ def apply_edit(content: str, edit: dict) -> str:
     raise SystemExit(f"未知编辑 op: {op}")
 
 
-def generate_content(task: dict, entry: dict, current: str) -> str:
+def generate_content(task: dict, entry: dict, current: str, related: list[dict] | None = None) -> str:
     if "llm_cmd" in task:
         context = {
             "instruction": task.get("instruction", ""),
             "entry": {"id": entry["id"], "title": entry.get("title"), "path": entry.get("path")},
             "current_content": current,
+            # 批次 5：MDSearchAgent 的检索命中（同协议互见的读侧输入）。
+            "related": related or [],
             "charter": "数字必须可追溯；被推翻表述显式化；不改动 最后更新/下次 review。",
         }
         proc = subprocess.run(
@@ -118,6 +120,19 @@ def main() -> int:
     parser.add_argument(
         "--bin", type=Path, default=None, help="synapse-mcp 路径（缺省=构建目录）"
     )
+    parser.add_argument(
+        "--mdsearch", action="store_true",
+        help="起草前先问 MDSearchAgent（dev-kb 只读检索）拿相关文档上下文",
+    )
+    parser.add_argument(
+        "--mdsearch-project", default=None,
+        help="dev-kb 侧的项目名（如 kaiwu / repository-manage）",
+    )
+    parser.add_argument("--devkb-repo", type=Path, default=None)
+    parser.add_argument(
+        "--mdsearch-timeout", type=int, default=None,
+        help="search 超时秒数（检索引擎冷启动/模型缺失时的降级闸）",
+    )
     args = parser.parse_args()
 
     task = json.loads(args.task.read_text(encoding="utf-8"))
@@ -125,7 +140,33 @@ def main() -> int:
 
     with SynapseMcpClient(args.kb, **kwargs) as client:
         entry, current = client.read_entry(task["target"])
-        proposed = generate_content(task, entry, current)
+
+        # 批次 5：--mdsearch 时先检索相关文档（同协议只读互见）。
+        # 检索引擎不可用（如 rerank 模型未缓存）时优雅降级：related 为空，
+        # 流程继续——起草不因读侧辅助缺失而中断。
+        related: list[dict] = []
+        mdsearch_note: dict | None = None
+        if args.mdsearch:
+            from mdsearch import MdSearchAgent, DEFAULT_DEVKB
+            try:
+                search_kwargs = {"search_timeout_s": args.mdsearch_timeout} if args.mdsearch_timeout else {}
+                with MdSearchAgent(args.devkb_repo or DEFAULT_DEVKB, **search_kwargs) as search_agent:
+                    query = task.get("search_query") or task.get("instruction", "")
+                    hits = search_agent.search(
+                        query, project=args.mdsearch_project, limit=5
+                    )
+                    related = [
+                        {"project": h["project"], "path": h["path"],
+                         "snippet": (h.get("index_snippet") or "")[:200]}
+                        for h in hits
+                    ]
+                    mdsearch_note = {"query": query, "hits": [r["path"] for r in related]}
+            except Exception as exc:
+                mdsearch_note = {"query": task.get("instruction", ""), "error": str(exc)[:200]}
+            print(json.dumps({"mdsearch": mdsearch_note}, ensure_ascii=False),
+                  file=sys.stderr)
+
+        proposed = generate_content(task, entry, current, related)
 
         # D7 预检：冻结键改动直接拒绝（服务端也会拦，这里给出更友好的报错）。
         old_fm, _ = split_frontmatter(current)
@@ -153,6 +194,7 @@ def main() -> int:
                 "mode": "proposal",
                 "proposalId": result["proposalId"],
                 "path": result["path"],
+                "relatedDocs": [r["path"] for r in related],
                 "next": "GUI 提案审阅面板（📋 语义提案）里看 diff 后批准/驳回",
             }, ensure_ascii=False))
         elif fm_changed:

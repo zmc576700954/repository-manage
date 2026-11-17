@@ -1,0 +1,17 @@
+{
+  "// 说明": "三 Agent 同协议（stdio MCP）互见的宿主登记示例（批次 5）。MCP server 只有两个：dev-kb 的只读检索与 rm 的读写服务；EditAgent / ReviewerAgent 是经这两组 server 工作的 CLI 进程（agents/edit_agent.py、agents/reviewer_agent.py），由编排方（人 / Claude Code / Claude Desktop）按 agents/README.md 的闭环调用。",
+  "mcpServers": {
+    "synapse-kb": {
+      "command": "/Users/zhumingchen/repository-manage/src-tauri/target/debug/synapse-mcp",
+      "args": ["--kb", "/Users/zhumingchen/kaiwu/kb/kaiwu"],
+      "//": "rm 读写服务（批次 3）：read 全开 / 结构写强制 dryRun / 语义写 propose_change 落 _proposals/"
+    },
+    "dev-kb-mdsearch": {
+      "command": "/Users/zhumingchen/dev-kb/.venv/bin/python",
+      "args": ["-m", "agent_app.mcp_server"],
+      "cwd": "/Users/zhumingchen/dev-kb",
+      "env": { "PYTHONPATH": "src" },
+      "//": "dev-kb 只读检索（ADR-0030）：index_status / search / read_source；search 首次调用需 bge-reranker 模型缓存"
+    }
+  }
+}

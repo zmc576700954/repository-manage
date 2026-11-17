@@ -64,6 +64,36 @@ frontmatter/结构改动走 dry_run 预览后自动落盘。
 
 | 文件 | 职责 |
 |---|---|
-| `mcp_client.py` | stdio MCP 客户端（JSON-RPC 2.0 换行分隔，与 dev-kb 同协议） |
-| `edit_agent.py` | EditAgent：结构写自动 / 语义改动出提案 |
-| `reviewer_agent.py` | ReviewerAgent：D8 三条审阅 + `review_proposal` 落报告 |
+| `mcp_client.py` | stdio MCP 客户端（JSON-RPC 2.0 换行分隔，与 dev-kb 同协议；`McpClient` 通用基类可接任意同协议 server） |
+| `mdsearch.py` | MDSearchAgent 桥接（批次 5）：dev-kb 只读检索的客户端封装，search 带超时降级闸 |
+| `edit_agent.py` | EditAgent：结构写自动 / 语义改动出提案（`--mdsearch` 检索上下文） |
+| `reviewer_agent.py` | ReviewerAgent：D8 三条审阅 + `review_proposal` 落报告（`--mdsearch` 二次溯源） |
+| `mcp.example.json` | MCP 宿主登记示例（两组 server 的 mcpServers 片段） |
+
+## 三 Agent 同协议互见（批次 5）
+
+| Agent | 形态 | 协议端 |
+|---|---|---|
+| MDSearchAgent | dev-kb 只读 MCP server（`index_status` / `search` / `read_source`） | 服务端（`agents/mdsearch.py` 是它的客户端桥接） |
+| EditAgent | rm CLI 进程 | 客户端（经 `SynapseMcpClient` → synapse-mcp 读写；可选 `--mdsearch` 连 dev-kb 检索） |
+| ReviewerAgent | rm CLI 进程 | 客户端（同上 + `--mdsearch` 二次溯源） |
+
+协议版本集三方一致（2024-11-05 / 2025-03-26 / 2025-06-18），协商结果
+2025-06-18。宿主登记示例见 `mcp.example.json`。
+
+```bash
+# MDSearchAgent 快路径（登记与索引统计，不加载检索引擎）
+python3 agents/mdsearch.py --status
+
+# EditAgent 带检索起草（search 不可用时优雅降级：related 为空，流程继续）
+python3 agents/edit_agent.py --kb <kb> --task task.json --mdsearch \
+  --mdsearch-project kaiwu --mdsearch-timeout 60
+
+# ReviewerAgent 二次溯源（KB 语料追不到的数字，在 dev-kb 索引里再找一次）
+python3 agents/reviewer_agent.py --kb <kb> --all --mdsearch --mdsearch-project kaiwu
+```
+
+**已知环境遗留**：dev-kb `search` 首次调用需 bge-reranker-v2-m3 模型缓存
+（`HF_HUB_OFFLINE=1`，缓存缺失时长时间阻塞）——`--mdsearch-timeout` 是
+降级闸（超时即判检索不可用，MdSearchAgent 重建会话并抛 ToolError）；
+补齐模型缓存后检索路径自动恢复，无需改代码。

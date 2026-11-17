@@ -4,8 +4,8 @@
 > **本文档是执行态的唯一权威记录**：完成了什么、怎么验收的、剩下的任务是什么、
 > 新会话如何接手。每批的详细修改清单见各批次文档。
 >
-> **执行状态（2026-11-17）：批次 0、0.5、1、2、3、4 已全部完成并提交。**
-> **批次 5 未开始，将在另一个会话中完成**——接手指引见文末 §5。
+> **执行状态（2026-11-17）：批次 0～5 全部完成（计划收官）。**
+> 收官状态与计划外方向见文末 §5 与 [batch-5.md](batch-5.md) §续接点。
 
 ## 纪律（任务约定，贯穿所有批次）
 
@@ -119,6 +119,23 @@ L7↔W9、L8↔W10、L9↔W11）在全部样例上逐文件等价，0 违反**�
 apply 落盘 origin=agent（Rust 测试路径）→ 双校验器 0E/0W；套件 312 绿、
 TS 构建绿。GUI 人审步骤在 [batch-4.md](batch-4.md) §GUI，待用户执行。
 
+### 批次 5 —— dev-kb 接入为 MDSearchAgent ✅（rm 本批提交；dev-kb 零改动）
+
+1. **mcp_client 泛化**：通用 `McpClient` 基类（任意 server 命令 + env 注入），
+   协议层全部上移；`SynapseMcpClient` 只留 KB 便捷方法。
+2. **`agents/mdsearch.py`**：dev-kb 只读检索桥接——index_status 快路径 /
+   search（**带超时降级闸**，rerank 模型缺失时不拖死流程）/ read_source。
+3. **双 Agent 接 `--mdsearch`**：edit_agent 检索上下文进 `llm_cmd`（related）
+   与报告（relatedDocs）；reviewer_agent 对 KB 语料追不到的数字二次溯源
+   （一次 search + ≤5 次 read_source）。
+4. **宿主登记示例** `agents/mcp.example.json` + README 互见节。
+
+验收：互见冒烟 13 项全 PASS（双 server 同协议 2025-06-18、kaiwu 923
+chunks、降级闸、闭环提案→审阅 pass、validate 0E/0W）；dev-kb CI 三 job
+本地等价执行全绿（契约 ✓ / pytest 115 ✓ / compare frozen ✓）；
+**dev-kb 仓库零改动**（ADR-0030 维持）。遗留：search 功能路径待
+bge-reranker 模型缓存（环境遗留，降级闸已验证）。详见 [batch-5.md](batch-5.md)。
+
 ## §2 提交索引（均未 push）
 
 | 仓库 | 提交 | 内容 |
@@ -129,27 +146,22 @@ TS 构建绿。GUI 人审步骤在 [batch-4.md](batch-4.md) §GUI，待用户执
 | rm | `40e18b5` | 批次 2（kb-spec + validator 规则） |
 | rm | 本批 HEAD（文档在本仓内，自引用哈希见 `git log`） | 批次 3（MCP server + 机制目录豁免） |
 | rm | 本批 HEAD | 批次 4（agents/ 双 Agent + 提案命令层 + GUI 审阅面板） |
+| rm | 本批 HEAD | 批次 5（MDSearchAgent 桥接 + 双 Agent --mdsearch + 宿主登记示例） |
 | kaiwu | `75a5b3e` | 批次 0.5（门禁适配器） |
 | kaiwu | `af7b8c1` | 批次 2（check_kb 新规则） |
 | kaiwu | `83304df` | 批次 3（check_kb `_` 机制目录豁免） |
 | dev-kb | `e036620` | 批次 2（fixtures + CI job） |
 | dev-kb | `a9ae4d0` | 批次 3（frozen 副本同步 + proj-mechanism + 基线） |
 
-## §3 未完成的任务（将在另一个会话中完成）
+## §3 未完成的任务（计划内批次已收官；以下是挂起事项，随需处理）
 
-> **批次 5 尚未开始。后续任务放到另一个会话执行**，接手指引见 §5。
-> 每批的完整定义见 [../merge-kaiwu-plan.md](../merge-kaiwu-plan.md) §3 批次 5。
-
-### 批次 5 —— dev-kb 接入为 MDSearchAgent
-
-- 独立仓库不变；`projects.yaml` 已登记；三 Agent 同协议（stdio MCP）互见
-  （rm server 协议已与 dev-kb 对齐，见批次 3；EditAgent/ReviewerAgent 见
-  批次 4 `agents/`）。
-- 验收：三 Agent 同协议互见；dev-kb 自身 CI（契约门禁）不受影响。
+> **批次 0～5 全部完成**。本节不再有批次任务，只剩挂起事项（均不阻塞）。
 
 ### 挂起事项（随批处理，不阻塞）
 
-- kaiwu 全链路回归 PASS 待模型目录恢复（见批次 0.5 遗留）。
+- kaiwu 全链路回归 PASS 待模型目录恢复（批次 0.5 遗留，环境问题）。
+- dev-kb `search` 功能路径待 bge-reranker 模型缓存（批次 5 遗留，环境问题；
+  降级闸已验证，补齐缓存后自动恢复）。
 - 批次 1 的 GUI 验收（编辑 + 归档演练 + check_kb 0/0）待用户在 tauri:dev 执行。
 - 批次 4 的 GUI 人审步骤（提案面板看 diff → 批准/驳回）待用户在 tauri:dev 执行
   （[batch-4.md](batch-4.md) §GUI 人审步骤）。
@@ -158,6 +170,11 @@ TS 构建绿。GUI 人审步骤在 [batch-4.md](batch-4.md) §GUI，待用户执
   完整解（全部写方接同一把文件锁）待需要时单独一批（batch-3.md §已知边界）。
 - 提案 apply 前的目标漂移检测（目标条目在审阅期间被改时提示）——
   加固项（batch-4.md §已知边界 #2）。
+
+### 计划外可做的方向（未排期，见 batch-5.md §续接点）
+
+- LLM 接入：edit_agent 的 `llm_cmd` 外挂（kaiwu 模型）+ reviewer 语义级 D8 判断。
+- GUI 内的 MDSearchAgent 检索入口（当前只经 CLI/宿主）。
 
 ## §4 环境事实（跨会话有用）
 
@@ -180,18 +197,15 @@ TS 构建绿。GUI 人审步骤在 [batch-4.md](batch-4.md) §GUI，待用户执
   仍索引展示（批次 3 定稿，规范「豁免」节有契约）。
 - 测试纪律工具链：`cargo test`（312 passed 基线）、`npm run build`（TS 严格检查）。
 
-## §5 新会话接手指引
+## §5 新会话接手指引（计划已收官，按需续接）
 
-1. **读这三份**：本文档（全局状态）→ [../merge-kaiwu-plan.md](../merge-kaiwu-plan.md)
-   §3 批次 5（任务定义）→ [batch-4.md](batch-4.md) 的「已知边界与遗留」
-   与「续接点」。
-2. **验证现场**：三仓 `git log -1` 应为 §2 表末行提交；`cargo test` 312 绿；
+1. **读这两份**：本文档（全局状态）→ [batch-5.md](batch-5.md) 的
+   「已知边界与遗留」与「续接点」（计划外方向清单）。
+2. **验证现场**：rm/kaiwu/dev-kb 三仓 `git log -1` 应为 §2 表末行提交；
+   `cargo test` 312 绿；
    `SYNAPSE_TODAY=2026-11-17 ./target/debug/synapse validate ~/kaiwu/kb/kaiwu --json`
    应 0/0/0；dev-kb `compare.py` frozen 模式应 PASS；
-   `synapse-mcp --help` 可运行。
-3. **批次 5 开工顺序**：计划 §3 批次 5 表 → dev-kb 侧编排（三 Agent 同协议
-   互见：MDSearchAgent 只读 ↔ rm `synapse-mcp` 读写 ↔ `agents/` 双 Agent）→
-   dev-kb 自身 CI 契约门禁不动的确认 → 互见验收 →
-   更新 `merge-progress/batch-5.md`（新建）→ 涉及仓库各自单仓提交
-   （每批一次提交的纪律不变）。
-4. **纪律不变**：批次间独立可回滚；针对性单元测试跑绿后删除；每批验收通过才开下一批。
+   `synapse-mcp --help` 可运行；`python3 agents/mdsearch.py --status`
+   可见六项目登记。
+3. **新任务开工**：从 §3 挂起事项或 batch-5.md §续接点挑方向；仍守纪律
+   ——针对性单元测试跑绿后删除；每批（或每项）独立提交可回滚。
