@@ -13,8 +13,11 @@ tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
 tauri = { version = "2", features = ["wry"], optional = true }
-tauri-plugin-dialog = "2"
-tauri-plugin-store = "2"
+# 两个插件只被 `run()`（tauri feature 门控）使用：optional 化后
+# --no-default-features（CLI / MCP bin 的 tauri-free 构建，批次 3/5）
+# 不再连带编译 tauri→glib（ubuntu CI 无 glib 系统包时曾因此失败）。
+tauri-plugin-dialog = { version = "2", optional = true }
+tauri-plugin-store = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
@@ -33,7 +36,7 @@ regex = "1"
 
 [features]
 default = ["tauri"]
-tauri = ["dep:tauri", "dep:tauri-build"]
+tauri = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog", "dep:tauri-plugin-store"]
 
 [dev-dependencies]
 tempfile = "3"
