@@ -820,6 +820,7 @@ mod tests {
             ignored_rules: vec![],
             error_count: 0,
             warning_count: 0,
+            extra_meta: vec![],
         }
     }
 

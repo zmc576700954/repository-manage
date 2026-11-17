@@ -1,9 +1,11 @@
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::entry::{read_entry_path, RawEntry};
+use crate::parser::yaml_field::ExtraMetaEntry;
 use crate::paths::index_db_path;
 use crate::scanner::scan_entry_paths;
 
@@ -44,7 +46,8 @@ CREATE TABLE IF NOT EXISTS entries (
     updated TEXT,
     ignored_rules TEXT,
     error_count INTEGER NOT NULL DEFAULT 0,
-    warning_count INTEGER NOT NULL DEFAULT 0
+    warning_count INTEGER NOT NULL DEFAULT 0,
+    extra_meta TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tags (
@@ -108,6 +111,9 @@ pub struct StoredEntry {
     pub ignored_rules: Vec<String>,
     pub error_count: u32,
     pub warning_count: u32,
+    /// frontmatter 里 rm 未建模的键（保序），如 kaiwu 四键。JSON 落库，
+    /// camelCase 序列化后透出给前端展示。
+    pub extra_meta: Vec<ExtraMetaEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,6 +172,7 @@ impl Index {
             "ALTER TABLE entries ADD COLUMN ignored_rules TEXT",
             "ALTER TABLE entries ADD COLUMN error_count INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE entries ADD COLUMN warning_count INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE entries ADD COLUMN extra_meta TEXT",
         ];
         for sql in add_columns {
             // 重复 ALTER 同一列会失败；用 `duplicate column name` 作为「已存在」的信号。
@@ -203,6 +210,8 @@ impl Index {
         let labels_json = serde_json::to_string(&entry.labels).unwrap_or_else(|_| "[]".to_string());
         let aliases_json = serde_json::to_string(&entry.aliases).unwrap_or_else(|_| "[]".to_string());
         let ignored_json = serde_json::to_string(&entry.ignored_rules).unwrap_or_else(|_| "[]".to_string());
+        let extra_meta_json =
+            serde_json::to_string(&entry.extra_meta).unwrap_or_else(|_| "[]".to_string());
         let error_count = entry
             .validation
             .iter()
@@ -217,8 +226,8 @@ impl Index {
         conn.execute(
             "INSERT INTO entries (id, title, path, content_path, group_name, dir, has_content_md, \
              labels, status, aliases, source, created, updated, ignored_rules, \
-             error_count, warning_count) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             error_count, warning_count, extra_meta) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(id) DO UPDATE SET \
              title = excluded.title, path = excluded.path, content_path = excluded.content_path, \
              group_name = excluded.group_name, dir = excluded.dir, \
@@ -226,7 +235,7 @@ impl Index {
              labels = excluded.labels, status = excluded.status, aliases = excluded.aliases, \
              source = excluded.source, created = excluded.created, updated = excluded.updated, \
              ignored_rules = excluded.ignored_rules, error_count = excluded.error_count, \
-             warning_count = excluded.warning_count",
+             warning_count = excluded.warning_count, extra_meta = excluded.extra_meta",
             params![
                 entry.id,
                 entry.title,
@@ -244,6 +253,7 @@ impl Index {
                 ignored_json,
                 error_count,
                 warning_count,
+                extra_meta_json,
             ],
         )?;
 
@@ -300,7 +310,7 @@ impl Index {
         let mut stmt = conn.prepare(
             "SELECT id, title, path, content_path, group_name, dir, has_content_md, \
                     labels, status, aliases, source, created, updated, ignored_rules, \
-                    error_count, warning_count \
+                    error_count, warning_count, extra_meta \
              FROM entries ORDER BY id",
         )?;
 
@@ -308,6 +318,7 @@ impl Index {
             let labels_json: Option<String> = row.get(7)?;
             let aliases_json: Option<String> = row.get(9)?;
             let ignored_json: Option<String> = row.get(13)?;
+            let extra_meta_json: Option<String> = row.get(16)?;
             Ok(StoredEntry {
                 id: row.get(0)?,
                 title: row.get(1)?,
@@ -329,6 +340,11 @@ impl Index {
                 ignored_rules: parse_json_vec(&ignored_json),
                 error_count: row.get::<_, i32>(14)?.max(0) as u32,
                 warning_count: row.get::<_, i32>(15)?.max(0) as u32,
+                // 坏 JSON 不报错：条目照常返回，缺的旁路元数据由下次 rebuild 覆写。
+                extra_meta: extra_meta_json
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str(s).ok())
+                    .unwrap_or_default(),
             })
         })?;
 
@@ -614,7 +630,7 @@ impl Index {
     ///         命中同 KB 的另一个 entry 时自动建立 reference 关系。
     pub fn rebuild(&self, kb_root: &Path) -> rusqlite::Result<usize> {
         use crate::parser::is_external_url;
-        use std::collections::{HashMap, HashSet};
+        use std::collections::HashSet;
 
         // 先完整扫描、解析、校验，再一次性写入 DB。
         // 这样 get_entries 不会看到「已清空、未插入」的中间态。
@@ -653,40 +669,24 @@ impl Index {
         }
         let entries = unique_entries;
 
-        // 构建 lookup 表：id 集合、file_stem -> id、rel_path -> id
-        let mut id_set: HashSet<String> = HashSet::with_capacity(entries.len());
-        let mut by_stem: HashMap<String, String> = HashMap::with_capacity(entries.len());
-        let mut by_rel_path: HashMap<String, String> = HashMap::with_capacity(entries.len());
-        for e in &entries {
-            id_set.insert(e.id.clone());
-            let stem = e
-                .path
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-            by_stem.entry(stem).or_insert_with(|| e.id.clone());
-            // rel path 形式："compliance/gdpr-and-data-protection.md"
-            let rel_path = e
-                .path
-                .strip_prefix(kb_root)
-                .unwrap_or(&e.path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            by_rel_path
-                .entry(rel_path)
-                .or_insert_with(|| e.id.clone());
-            if let Ok(cp_rel) = e.content_path.strip_prefix(kb_root) {
-                let cp_rel = cp_rel.to_string_lossy().replace('\\', "/");
-                by_rel_path.entry(cp_rel).or_insert_with(|| e.id.clone());
-            }
-        }
+        // 构建 lookup 表：id 集合、file_stem -> id、rel_path -> id。
+        // 与 validator 系统标签（I2）共用同一构建，保证解析口径一致。
+        let lookups = build_link_lookups(&entries, kb_root);
 
         // 为每个 entry 跑校验规则，让 RawEntry.validation 有数据。
         // 这样 `error_count` / `warning_count` 才能正确写入 DB。
+        // E4 门控：KB 里任一条目声明了 tags 体系才启用 `type:` 前缀要求。
+        let tags_system_declared = entries.iter().any(|e| e.declares_tags_system);
         let entries: Vec<RawEntry> = entries
             .into_iter()
             .map(|mut e| {
-                e.validation = crate::validator::rules::check_all(&e, kb_root, &id_set, layout);
+                e.validation = crate::validator::rules::check_all(
+                    &e,
+                    kb_root,
+                    &lookups.id_set,
+                    layout,
+                    tags_system_declared,
+                );
                 e
             })
             .collect();
@@ -698,9 +698,12 @@ impl Index {
         let mut typed_pairs: HashSet<(String, String)> = HashSet::new();
         for entry in &entries {
             for rel in &entry.typed_relations {
-                if let Some(target_id) =
-                    resolve_target(&rel.target, &id_set, &by_stem, &by_rel_path)
-                {
+                if let Some(target_id) = resolve_target(
+                    &rel.target,
+                    &lookups.id_set,
+                    &lookups.by_stem,
+                    &lookups.by_rel_path,
+                ) {
                     if target_id != entry.id {
                         typed_pairs.insert((entry.id.clone(), target_id.clone()));
                         typed_relations.push((
@@ -717,9 +720,12 @@ impl Index {
         for entry in &entries {
             // [[xxx]] 双链
             for target in &entry.linked_targets {
-                if let Some(target_id) =
-                    resolve_target(target, &id_set, &by_stem, &by_rel_path)
-                {
+                if let Some(target_id) = resolve_target(
+                    target,
+                    &lookups.id_set,
+                    &lookups.by_stem,
+                    &lookups.by_rel_path,
+                ) {
                     let pair = (entry.id.clone(), target_id);
                     if pair.1 != entry.id && !typed_pairs.contains(&pair) {
                         references.push(pair);
@@ -737,8 +743,12 @@ impl Index {
                     // 图片/PDF/视频等是附件，不是 entry 关系目标
                     continue;
                 }
-                if let Some(target_id) =
-                    resolve_target(cleaned, &id_set, &by_stem, &by_rel_path)
+                if let Some(target_id) = resolve_target(
+                    cleaned,
+                    &lookups.id_set,
+                    &lookups.by_stem,
+                    &lookups.by_rel_path,
+                )
                 {
                     let pair = (entry.id.clone(), target_id);
                     if pair.1 != entry.id && !typed_pairs.contains(&pair) {
@@ -779,8 +789,56 @@ impl Index {
     }
 }
 
+/// 条目级链接解析查找表：id 集合、`file_stem -> id`、根相对路径 -> id。
+/// rebuild 与 validator 系统标签（I2 入/出度）共用同一构建，
+/// 保证「边怎么算」只有一套口径。
+pub(crate) struct LinkLookups {
+    pub id_set: std::collections::HashSet<String>,
+    pub by_stem: HashMap<String, String>,
+    pub by_rel_path: HashMap<String, String>,
+}
+
+/// 从一批 RawEntry 构建查找表。只认 KB 根相对路径与文件 stem——
+/// 与 rebuild 的既有行为完全一致（增量为路径不含 `.md` 变体的差异
+/// 见批次 1 Q17 解析健壮化）。
+pub(crate) fn build_link_lookups(entries: &[RawEntry], kb_root: &Path) -> LinkLookups {
+    let mut lookups = LinkLookups {
+        id_set: HashSet::with_capacity(entries.len()),
+        by_stem: HashMap::with_capacity(entries.len()),
+        by_rel_path: HashMap::with_capacity(entries.len()),
+    };
+    for e in entries {
+        lookups.id_set.insert(e.id.clone());
+        let stem = e
+            .path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        lookups.by_stem.entry(stem).or_insert_with(|| e.id.clone());
+        // rel path 形式："compliance/gdpr-and-data-protection.md"
+        let rel_path = e
+            .path
+            .strip_prefix(kb_root)
+            .unwrap_or(&e.path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        lookups
+            .by_rel_path
+            .entry(rel_path)
+            .or_insert_with(|| e.id.clone());
+        if let Ok(cp_rel) = e.content_path.strip_prefix(kb_root) {
+            let cp_rel = cp_rel.to_string_lossy().replace('\\', "/");
+            lookups
+                .by_rel_path
+                .entry(cp_rel)
+                .or_insert_with(|| e.id.clone());
+        }
+    }
+    lookups
+}
+
 /// 把各种形式的链接 target（双链 / 相对路径 / file stem）解析到 entry.id。
-fn resolve_target(
+pub(crate) fn resolve_target(
     target: &str,
     id_set: &std::collections::HashSet<String>,
     by_stem: &std::collections::HashMap<String, String>,
@@ -829,7 +887,7 @@ fn resolve_target(
 /// Without this filter, `[photo](./photo.png)` in entry A.md would resolve via
 /// `by_stem["photo"]` if any entry happens to share that stem and add a
 /// spurious (A, photo, "reference") edge.
-fn is_attachment_url(url: &str) -> bool {
+pub(crate) fn is_attachment_url(url: &str) -> bool {
     let ext = std::path::Path::new(url)
         .extension()
         .and_then(|s| s.to_str())
@@ -878,6 +936,8 @@ mod tests {
             created: None,
             updated: None,
             ignored_rules: vec![],
+            extra_meta: vec![],
+            declares_tags_system: false,
             validation: vec![],
         }
     }

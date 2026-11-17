@@ -718,6 +718,26 @@ export function DetailPanel() {
           {/* Inline metadata editor (title/tags/labels/status) */}
           <EntryMetadataEditor entry={entry} />
 
+          {/* frontmatter 旁路元数据只读展示（kaiwu 四键等）。
+              旧快照/旧条目没有 extraMeta 字段时整段不渲染。 */}
+          {entry.extraMeta && entry.extraMeta.length > 0 && (
+            <div className="border-b border-gray-200 p-4">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+                {t('extraMetaHeader')}
+              </h3>
+              <dl className="mt-2 space-y-1 text-xs">
+                {entry.extraMeta.map((m) => (
+                  <div key={m.key} className="flex gap-2">
+                    <dt className="shrink-0 font-medium text-gray-700">{m.key}</dt>
+                    <dd className="min-w-0 break-words text-gray-600">
+                      {typeof m.value === 'string' ? m.value : JSON.stringify(m.value)}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          )}
+
           {/* Markdown content */}
           <div className="border-b border-gray-200 p-4">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">

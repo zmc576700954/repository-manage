@@ -8,14 +8,20 @@ use crate::scanner::KbLayout;
 use crate::validator::{Severity, ValidationIssue};
 
 /// 跑所有 E/W 规则，返回发现的问题。
+///
+/// `tags_system_declared`：KB 级是否声明了 rm 的 tags 体系
+/// （任一条目带 `@synapse-tags` 注释或 frontmatter `tags` 键）。
+/// E4（`type:` 前缀要求）只对声明了体系的 KB 生效——kaiwu 式
+/// frontmatter KB（YAML 四键、无 tags）不再被打成全量 E4 error。
 pub fn check_all(
     entry: &RawEntry,
     kb_root: &Path,
     all_ids: &HashSet<String>,
     layout: KbLayout,
+    tags_system_declared: bool,
 ) -> Vec<ValidationIssue> {
     let mut issues = vec![];
-    issues.extend(check_required(entry, kb_root, all_ids));
+    issues.extend(check_required(entry, kb_root, all_ids, tags_system_declared));
     issues.extend(check_id_matches_path(entry, kb_root, all_ids));
     issues.extend(check_directory_depth(entry, kb_root, all_ids));
     issues.extend(check_root_md_files(entry, kb_root, all_ids, layout));
@@ -37,6 +43,7 @@ pub fn check_required(
     entry: &RawEntry,
     _kb_root: &Path,
     _all_ids: &HashSet<String>,
+    tags_system_declared: bool,
 ) -> Vec<ValidationIssue> {
     let mut issues = vec![];
     if entry.id.trim().is_empty() {
@@ -59,7 +66,7 @@ pub fn check_required(
             ignored: false,
         });
     }
-    if !entry.tags.iter().any(|t| t.starts_with("type:")) {
+    if tags_system_declared && !entry.tags.iter().any(|t| t.starts_with("type:")) {
         issues.push(ValidationIssue {
             entry_id: entry.id.clone(),
             rule_id: "E4".into(),
@@ -299,12 +306,42 @@ pub fn check_broken_link_targets(
         .collect()
 }
 
+/// 普通 markdown 链接是否指向 KB 内的条目文件（`other.md`、`../dir/other.md`）。
+/// 外链（任意 `scheme:`，如 `https://`、`mailto:`）与纯锚点 `#section` 都不算。
+fn is_internal_md_link(url: &str) -> bool {
+    let url = url.trim();
+    if url.is_empty() || url.starts_with('#') || url.starts_with("//") {
+        return false;
+    }
+    // 带 scheme 的绝对地址不是 KB 内部引用；相对路径里出现冒号的情况极少，
+    // 这里按 RFC 3986 的 scheme 字符集判断，避免把 `file.md` 误排除。
+    if let Some(colon) = url.find(':') {
+        let scheme = &url[..colon];
+        if !scheme.is_empty()
+            && !scheme.contains('/')
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        {
+            return false;
+        }
+    }
+    let path = url.split(['#', '?']).next().unwrap_or("");
+    path.to_ascii_lowercase().ends_with(".md")
+}
+
 pub fn check_orphan_candidate(
     entry: &RawEntry,
     _kb_root: &Path,
     _all_ids: &HashSet<String>,
 ) -> Vec<ValidationIssue> {
-    if entry.linked_targets.is_empty() {
+    // `[[wikilink]]` 与普通 markdown 链接都算有效引用；后者不能因为是外链
+    // 或纯锚点就被当成孤立节点。
+    let has_markdown_ref = entry
+        .markdown_links
+        .iter()
+        .any(|link| is_internal_md_link(&link.url));
+    if entry.linked_targets.is_empty() && !has_markdown_ref {
         return vec![ValidationIssue {
             entry_id: entry.id.clone(),
             rule_id: "W5".into(),
@@ -380,6 +417,8 @@ mod tests {
             created: None,
             updated: None,
             ignored_rules: vec![],
+            extra_meta: vec![],
+            declares_tags_system: false,
             validation: vec![],
         }
     }
@@ -388,28 +427,28 @@ mod tests {
     fn e1_missing_id() {
         let mut e = make_entry("foo", "Foo", vec!["type:concept".into()]);
         e.id = String::new();
-        let issues = check_required(&e, std::path::Path::new("/kb"), &Default::default());
+        let issues = check_required(&e, std::path::Path::new("/kb"), &Default::default(), true);
         assert!(issues.iter().any(|i| i.rule_id == "E1"));
     }
 
     #[test]
     fn e3_missing_title() {
         let mut e = make_entry("foo", "", vec!["type:concept".into()]);
-        let issues = check_required(&e, std::path::Path::new("/kb"), &Default::default());
+        let issues = check_required(&e, std::path::Path::new("/kb"), &Default::default(), true);
         assert!(issues.iter().any(|i| i.rule_id == "E3"));
     }
 
     #[test]
     fn e4_missing_type_prefix() {
         let e = make_entry("foo", "Foo", vec!["topic:react".into()]);
-        let issues = check_required(&e, std::path::Path::new("/kb"), &Default::default());
+        let issues = check_required(&e, std::path::Path::new("/kb"), &Default::default(), true);
         assert!(issues.iter().any(|i| i.rule_id == "E4"));
     }
 
     #[test]
     fn e4_clean_when_has_type() {
         let e = make_entry("foo", "Foo", vec!["type:concept".into()]);
-        let issues = check_required(&e, std::path::Path::new("/kb"), &Default::default());
+        let issues = check_required(&e, std::path::Path::new("/kb"), &Default::default(), true);
         assert!(!issues.iter().any(|i| i.rule_id == "E4"));
     }
 
@@ -418,6 +457,59 @@ mod tests {
         let e = make_entry("foo", "Foo", vec!["type:note".into()]);
         let issues = check_orphan_candidate(&e, std::path::Path::new("/kb"), &Default::default());
         assert!(issues.iter().any(|i| i.rule_id == "W5"));
+    }
+
+    #[test]
+    fn w5_clean_when_internal_markdown_link() {
+        let mut e = make_entry("foo", "Foo", vec!["type:note".into()]);
+        e.markdown_links = vec![crate::parser::links::MarkdownLink {
+            text: "ComfyUI".into(),
+            url: "../02-技术详解/01-ComfyUI.md".into(),
+        }];
+        let issues = check_orphan_candidate(&e, std::path::Path::new("/kb"), &Default::default());
+        assert!(
+            !issues.iter().any(|i| i.rule_id == "W5"),
+            "内部 markdown 链接应算有效引用: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn w5_markdown_link_with_anchor_still_counts() {
+        let mut e = make_entry("foo", "Foo", vec!["type:note".into()]);
+        e.markdown_links = vec![crate::parser::links::MarkdownLink {
+            text: "章节".into(),
+            url: "01-ComfyUI.md#节点".into(),
+        }];
+        let issues = check_orphan_candidate(&e, std::path::Path::new("/kb"), &Default::default());
+        assert!(!issues.iter().any(|i| i.rule_id == "W5"));
+    }
+
+    #[test]
+    fn w5_orphan_when_only_external_markdown_links() {
+        let mut e = make_entry("foo", "Foo", vec!["type:note".into()]);
+        e.markdown_links = vec![
+            crate::parser::links::MarkdownLink {
+                text: "外链".into(),
+                url: "https://example.com/guide.md".into(),
+            },
+            crate::parser::links::MarkdownLink {
+                text: "邮件".into(),
+                url: "mailto:someone@example.com".into(),
+            },
+            crate::parser::links::MarkdownLink {
+                text: "锚点".into(),
+                url: "#section".into(),
+            },
+            crate::parser::links::MarkdownLink {
+                text: "图片".into(),
+                url: "assets/cover.png".into(),
+            },
+        ];
+        let issues = check_orphan_candidate(&e, std::path::Path::new("/kb"), &Default::default());
+        assert!(
+            issues.iter().any(|i| i.rule_id == "W5"),
+            "外链/锚点/附件都不应算内部引用: {issues:?}"
+        );
     }
 
     #[test]

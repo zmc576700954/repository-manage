@@ -3,6 +3,7 @@
   "renameTitle": "重命名或移动此条目",
   "tagsHeader": "标签",
   "contentHeader": "文档内容",
+  "extraMetaHeader": "其他元数据（frontmatter）",
   "loadingContent": "加载中…",
   "contentErrorMissing": "源文件不存在或无法读取",
   "contentIdle": "点击左侧文档查看其内容。本面板显示这个文档的完整内容。",

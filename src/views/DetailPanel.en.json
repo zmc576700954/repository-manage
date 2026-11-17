@@ -3,6 +3,7 @@
   "renameTitle": "Rename or move this entry",
   "tagsHeader": "Tags",
   "contentHeader": "Document content",
+  "extraMetaHeader": "Other metadata (frontmatter)",
   "loadingContent": "Loading…",
   "contentErrorMissing": "Source file does not exist or cannot be read",
   "contentIdle": "Click a document on the left to view its content. This panel shows the full content of that document.",

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 /// YAML frontmatter 中的高级配置字段
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -17,6 +17,65 @@ pub struct YamlFields {
     pub preview: Option<String>,
     #[serde(default)]
     pub hidden: Option<bool>,
+}
+
+/// frontmatter 中 rm 未建模的键（保序），随条目索引进 DB 并透出给 UI。
+/// kaiwu 式知识库的四键（优先级 / 状态 / 最后更新 / 下次 review）从这里原样透出；
+/// 批次 1 的 frontmatter 保序写入器将以它为「不得丢失的已知集合」。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExtraMetaEntry {
+    pub key: String,
+    pub value: serde_json::Value,
+}
+
+/// rm 建模过的 frontmatter 键。这些键进 `YamlFields`，不进旁路表。
+const KNOWN_YAML_KEYS: [&str; 7] = ["color", "shape", "pinned", "order", "icon", "preview", "hidden"];
+
+/// 一次解析 frontmatter：已知键进 `YamlFields`，其余键原样进旁路表（保持键序）。
+/// serde_yaml 0.9 的 `Mapping` 由 IndexMap 背书，插入序即文档键序。
+/// 非映射形态（列表 / 标量）与非法 YAML 返回 Err —— 与旧 `parse_yaml_fields`
+/// 的「整体失败即 None」口径一致。
+///
+/// 已知键类型不符时按缺省处理（不使整个 frontmatter 失效）：
+/// 旧实现对任一键类型错误会丢弃全部字段，这里放宽为逐键容错。
+pub fn parse_yaml_fields_with_extras(
+    yaml: &str,
+) -> Result<(YamlFields, Vec<ExtraMetaEntry>), serde_yaml::Error> {
+    let mapping: serde_yaml::Mapping = serde_yaml::from_str(yaml)?;
+    let mut fields = YamlFields::default();
+    let mut extras: Vec<ExtraMetaEntry> = Vec::with_capacity(mapping.len());
+    for (k, v) in &mapping {
+        let key = k.as_str().map(String::from).unwrap_or_else(|| {
+            // 非字符串 YAML 键（罕见）：序列化成文本作键，仅用于展示透传。
+            serde_yaml::to_string(k)
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        });
+        if KNOWN_YAML_KEYS.contains(&key.as_str()) {
+            match key.as_str() {
+                "color" => fields.color = from_value_ok(&v),
+                "shape" => fields.shape = from_value_ok(&v),
+                "pinned" => fields.pinned = from_value_ok(&v),
+                "order" => fields.order = from_value_ok(&v),
+                "icon" => fields.icon = from_value_ok(&v),
+                "preview" => fields.preview = from_value_ok(&v),
+                "hidden" => fields.hidden = from_value_ok(&v),
+                _ => unreachable!("KNOWN_YAML_KEYS 与分支不一致"),
+            }
+        } else {
+            extras.push(ExtraMetaEntry {
+                key,
+                value: serde_json::to_value(v).unwrap_or(serde_json::Value::Null),
+            });
+        }
+    }
+    Ok((fields, extras))
+}
+
+/// 单键反序列化失败返回 None（缺省），不让整个 frontmatter 报废。
+fn from_value_ok<T: DeserializeOwned>(v: &serde_yaml::Value) -> Option<T> {
+    serde_yaml::from_value(v.clone()).ok()
 }
 
 /// 从 Markdown 文件开头提取 --- 包裹的 YAML 块，返回解析结果。

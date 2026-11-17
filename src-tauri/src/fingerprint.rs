@@ -189,6 +189,7 @@ mod tests {
             updated: None,
             ignored_rules: vec![],
             error_count: 0,
+            extra_meta: vec![],
             warning_count: 0,
         }
     }

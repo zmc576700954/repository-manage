@@ -20,7 +20,7 @@ pub fn find_entry_dirs(root: &Path) -> Vec<PathBuf> {
         .filter_map(Result::ok)
     {
         let path = entry.path();
-        if path.is_dir() && path.join("content.md").exists() && !is_artifact(path) {
+        if path.is_dir() && path.join("content.md").exists() && !is_artifact(root, path) {
             entries.push(path.to_path_buf());
         }
     }
@@ -46,7 +46,7 @@ pub fn find_md_files(root: &Path) -> Vec<PathBuf> {
                 .and_then(|s| s.to_str())
                 .map(|s| s.eq_ignore_ascii_case("md"))
                 .unwrap_or(false)
-            && !is_artifact(p)
+            && !is_artifact(root, p)
         {
             files.push(p.to_path_buf());
         }
@@ -98,21 +98,23 @@ pub fn scan_entry_paths(root: &Path) -> (Vec<PathBuf>, KbLayout) {
     (paths, layout)
 }
 
-/// 路径是否为产物（备份 / 日志 / 编辑器临时文件 / 隐藏状态目录），
+/// 路径是否为产物（备份 / 日志 / 编辑器临时文件 / 隐藏目录），
 /// 需要从 KB 扫描中排除。
-fn is_artifact(path: &Path) -> bool {
-    for ancestor in path.ancestors() {
-        if let Some(name) = ancestor.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with(".synapse-migrate-backup-")
-                || name == ".synapse-migrate.log"
-                || name.starts_with(".synapse-tmp-")
-                || name == ".synapse"
-            {
-                return true;
-            }
-        }
-    }
-    false
+///
+/// 任何以 `.` 开头的路径段都跳过：`.synapse`（版本历史）、
+/// `.synapse-migrate-*`（迁移备份/日志）、`.synapse-tmp-*`（原子写临时文件）
+/// 以及用户/工具留下的 `.obsidian`、`.trash`、`.synapse-fix-backup` 等。
+/// 以点开头的文件/目录不是 KB 条目，进索引只会在侧栏和图谱里出现幽灵条目。
+fn is_artifact(root: &Path, path: &Path) -> bool {
+    // 只检查 KB 根以下的路径段：临时目录本身可能就叫 `.tmpXXXX`
+    // （tempfile 生成），不能把整个 KB 误判成隐藏目录。
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    rel.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(|name| name.starts_with('.'))
+    })
 }
 
 /// 提取条目的 ID（相对于 root 的目录名）。
@@ -207,6 +209,28 @@ mod tests {
 
         let (paths, _) = scan_entry_paths(root);
         assert_eq!(paths.len(), 1, "只应索引 note.md");
+        assert!(paths[0].ends_with("note.md"));
+    }
+
+    /// 备份工具会在 KB 里留下 `.synapse-fix-backup/`、`.trash/` 等隐藏目录，
+    /// 里面的 `.md` 是历史副本，不能出现在侧栏/图谱/搜索结果里。
+    #[test]
+    fn scan_paths_ignores_dot_prefixed_backup_dirs() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("note.md"), "# Note\n").unwrap();
+        fs::create_dir_all(root.join(".synapse-fix-backup")).unwrap();
+        fs::write(
+            root.join(".synapse-fix-backup").join("1700000000_old.md"),
+            "# old copy\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join(".obsidian")).unwrap();
+        fs::write(root.join(".obsidian").join("workspace.md"), "# hidden\n").unwrap();
+        fs::write(root.join(".draft.md"), "# hidden draft\n").unwrap();
+
+        let (paths, _) = scan_entry_paths(root);
+        assert_eq!(paths.len(), 1, "只应索引可见的 note.md: {paths:?}");
         assert!(paths[0].ends_with("note.md"));
     }
 

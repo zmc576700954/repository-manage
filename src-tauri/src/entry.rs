@@ -4,7 +4,8 @@ use crate::parser::{
     attachments::classify_attachment, attachments::extract_attachments, comments::extract_labels,
     comments::parse_metadata_comments, links::extract_double_bracket_links,
     links::extract_markdown_links, links::extract_relations, links::MarkdownLink, links::Relation,
-    yaml_field::extract_yaml_frontmatter, yaml_field::parse_yaml_fields, yaml_field::YamlFields,
+    yaml_field::extract_yaml_frontmatter, yaml_field::parse_yaml_fields_with_extras,
+    yaml_field::ExtraMetaEntry, yaml_field::YamlFields,
 };
 
 #[derive(Debug, Clone)]
@@ -37,6 +38,13 @@ pub struct RawEntry {
     pub created: Option<String>,
     pub updated: Option<String>,
     pub ignored_rules: Vec<String>,
+    /// frontmatter 里 rm 未建模的键（保序透传），供 UI 展示 kaiwu 四键等
+    /// 外部元数据。rm 自身不写这些键（写路径改造在批次 1）。
+    pub extra_meta: Vec<ExtraMetaEntry>,
+    /// 该条目是否声明了 rm 的 tags 体系（`@synapse-tags` 注释或 frontmatter
+    /// `tags` 键）。KB 级任一条目为 true 即视为声明；E4（`type:` 前缀要求）
+    /// 只对声明了体系的 KB 生效，kaiwu 式 frontmatter KB 不再被打成 35 个 error。
+    pub declares_tags_system: bool,
     pub validation: Vec<crate::validator::ValidationIssue>,
 }
 
@@ -64,6 +72,8 @@ struct ParsedBody {
     created: Option<String>,
     updated: Option<String>,
     ignored_rules: Vec<String>,
+    extra_meta: Vec<ExtraMetaEntry>,
+    declares_tags_system: bool,
 }
 
 fn parse_body(content: &str) -> ParsedBody {
@@ -86,7 +96,7 @@ fn parse_body(content: &str) -> ParsedBody {
             caption,
         })
         .collect();
-    let yaml = extract_yaml_frontmatter(content)
+    let (yaml, extra_meta) = extract_yaml_frontmatter(content)
         .map(|yaml| {
             // 去掉首尾的 --- 标记，避免 serde_yaml 解析为多文档
             yaml.lines()
@@ -94,7 +104,12 @@ fn parse_body(content: &str) -> ParsedBody {
                 .collect::<Vec<_>>()
                 .join("\n")
         })
-        .and_then(|yaml| parse_yaml_fields(&yaml).ok());
+        .and_then(|yaml| parse_yaml_fields_with_extras(&yaml).ok())
+        .map_or((None, Vec::new()), |(fields, extra)| (Some(fields), extra));
+
+    // tags 体系声明：`@synapse-tags` 注释或 frontmatter `tags` 键，任一即算。
+    let declares_tags_system =
+        metadata.contains_key("tags") || extra_meta.iter().any(|m| m.key == "tags");
 
     let typed_relations = extract_relations(content)
         .into_iter()
@@ -132,6 +147,8 @@ fn parse_body(content: &str) -> ParsedBody {
         markdown_links: extract_markdown_links(content),
         typed_relations,
         yaml,
+        extra_meta,
+        declares_tags_system,
         metadata,
     }
 }
@@ -228,6 +245,8 @@ pub fn read_md_file(file: &Path, kb_root: &Path) -> RawEntry {
         created: body.created,
         updated: body.updated,
         ignored_rules: body.ignored_rules,
+        extra_meta: body.extra_meta,
+        declares_tags_system: body.declares_tags_system,
         validation: vec![],
     }
 }
@@ -265,6 +284,8 @@ pub fn read_entry(entry_dir: &Path) -> RawEntry {
             created: None,
             updated: None,
             ignored_rules: vec![],
+            extra_meta: vec![],
+            declares_tags_system: false,
             validation: vec![],
         };
     }
@@ -313,6 +334,8 @@ pub fn read_entry(entry_dir: &Path) -> RawEntry {
         created: body.created,
         updated: body.updated,
         ignored_rules: body.ignored_rules,
+        extra_meta: body.extra_meta,
+        declares_tags_system: body.declares_tags_system,
         validation: vec![],
     }
 }

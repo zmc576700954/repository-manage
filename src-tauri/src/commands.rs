@@ -942,6 +942,7 @@ pub async fn validate_entry(
         &entry_dir,
         &all_ids,
         crate::scanner::KbLayout::Directory,
+        entry.declares_tags_system,
     ))
 }
 
@@ -1249,6 +1250,8 @@ pub async fn apply_fix(
         created: None,
         updated: None,
         ignored_rules: vec![],
+        extra_meta: vec![],
+        declares_tags_system: false,
         validation: vec![],
     };
 

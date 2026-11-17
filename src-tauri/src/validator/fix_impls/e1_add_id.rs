@@ -77,6 +77,8 @@ mod tests {
             created: None,
             updated: None,
             ignored_rules: vec![],
+            extra_meta: vec![],
+            declares_tags_system: false,
             validation: vec![],
         }
     }

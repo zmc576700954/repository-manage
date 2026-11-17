@@ -26,6 +26,13 @@ export interface Attachment {
   attachmentType: 'image' | 'document' | 'other';
 }
 
+/// frontmatter 中 rm 未建模的键（保序），如 kaiwu 的
+/// 优先级 / 状态 / 最后更新 / 下次 review。只读透传展示。
+export interface ExtraMetaEntry {
+  key: string;
+  value: unknown;
+}
+
 export interface SaveEntryResult {
   changed: boolean;
   bytes: number;
@@ -98,6 +105,8 @@ export interface Entry {
   relations: Relation[];
   hasContentMd: boolean;
   status?: string;
+  /// frontmatter 旁路元数据（kaiwu 四键等）。旧快照可能没有。
+  extraMeta?: ExtraMetaEntry[];
   errorCount?: number;
   warningCount?: number;
 }
@@ -127,6 +136,7 @@ export interface StoredEntry {
   ignoredRules: string[];
   errorCount: number;
   warningCount: number;
+  extraMeta: ExtraMetaEntry[];
 }
 
 export interface Layout {

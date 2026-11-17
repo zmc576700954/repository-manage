@@ -76,13 +76,15 @@ pub fn validate_kb(kb_root: &Path) -> ValidationReport {
     };
 
     let all_ids: HashSet<String> = entries.iter().map(|e| e.id.clone()).collect();
+    // E4 门控：KB 里任一条目声明了 tags 体系才启用 `type:` 前缀要求。
+    let tags_system_declared = entries.iter().any(|e| e.declares_tags_system);
 
     for entry in &entries {
-        let issues = rules::check_all(entry, kb_root, &all_ids, layout);
+        let issues = rules::check_all(entry, kb_root, &all_ids, layout, tags_system_declared);
         report.issues.extend(issues);
     }
 
-    report.issues.extend(system_labels::compute_all(&entries));
+    report.issues.extend(system_labels::compute_all(&entries, kb_root));
 
     report
 }
