@@ -27,7 +27,7 @@ pub fn descriptor_and_apply(
     }
 
     let raw = std::fs::read_to_string(&entry.content_path)?;
-    let new_content = strip_system_labels(&raw);
+    let new_content = strip_system_labels(&raw, &entry.content_path);
 
     backup::backup_then_write(&entry.content_path, &new_content, "E9")?;
 
@@ -42,9 +42,36 @@ pub fn descriptor_and_apply(
     })
 }
 
-/// 过滤掉完全由 system label 组成的 `@synapse-labels:` 行。
-/// 包含任意 system label 的整行也会被丢掉（保守策略）。
-fn strip_system_labels(raw: &str) -> String {
+/// Q6.a：有 frontmatter 的文件把净化后的 labels 写回 frontmatter（CSV 标量；
+/// 全空则删除键）；无 frontmatter 的旧文件维持注释行过滤（保守策略：
+/// 含任意 system label 的整行丢掉）。
+fn strip_system_labels(raw: &str, content_path: &Path) -> String {
+    if crate::parser::fm_writer::has_frontmatter(raw) {
+        let parsed = crate::entry::read_md_file(
+            content_path,
+            content_path.parent().unwrap_or(Path::new(".")),
+        );
+        let kept: Vec<String> = parsed
+            .labels
+            .iter()
+            .filter(|l| !SYSTEM_LABELS.contains(&l.as_str()))
+            .cloned()
+            .collect();
+        let edit = if kept.is_empty() {
+            crate::parser::fm_writer::FrontmatterEdit::remove("labels")
+        } else {
+            crate::parser::fm_writer::FrontmatterEdit::set(
+                "labels",
+                crate::parser::fm_writer::FmValue::List(kept),
+            )
+        };
+        return crate::parser::fm_writer::apply_edits(raw, &edit);
+    }
+    strip_system_labels_comment(raw)
+}
+
+/// 旧文件（无 frontmatter）的注释行过滤：包含任意 system label 的整行丢掉。
+fn strip_system_labels_comment(raw: &str) -> String {
     let trailing_nl = raw.ends_with('\n');
     let kept: Vec<&str> = raw
         .lines()
@@ -97,6 +124,7 @@ mod tests {
             ignored_rules: vec![],
             extra_meta: vec![],
             declares_tags_system: false,
+            doc_code: None,
             validation: vec![],
         }
     }
@@ -125,44 +153,69 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&content_path).unwrap(), raw_in);
     }
 
-    /// 只含 system label 的整行被剥离
+    /// 旧文件（无 frontmatter）：只含 system label 的整行被剥离
     #[test]
     fn strips_all_system_label_line() {
         let raw_in = "<!-- @synapse-labels: recently-modified, orphan -->\n# Body\n";
-        let out = strip_system_labels(raw_in);
+        let out = strip_system_labels_comment(raw_in);
         assert_eq!(out, "# Body\n");
     }
 
-    /// 包含单个 system label 的行也被剥离
+    /// 旧文件：包含单个 system label 的行也被剥离
     #[test]
     fn strips_single_system_label_line() {
         let raw_in = "<!-- @synapse-labels: recently-modified -->\n# Body\n";
-        let out = strip_system_labels(raw_in);
+        let out = strip_system_labels_comment(raw_in);
         assert_eq!(out, "# Body\n");
     }
 
-    /// 不含 system label 的 `@synapse-labels:` 行原样保留
+    /// 旧文件：不含 system label 的 `@synapse-labels:` 行原样保留
     #[test]
     fn keeps_user_only_label_line() {
         let raw_in = "<!-- @synapse-labels: custom-tag, manual -->\n# Body\n";
-        let out = strip_system_labels(raw_in);
+        let out = strip_system_labels_comment(raw_in);
         assert_eq!(out, raw_in);
     }
 
-    /// 多个 system label 组合也被剥离
+    /// 旧文件：多个 system label 组合也被剥离
     #[test]
     fn strips_combo_of_system_labels() {
         let raw_in =
             "<!-- @synapse-labels: stale, broken-link -->\n<!-- @synapse-labels: user -->\n# Body\n";
-        let out = strip_system_labels(raw_in);
+        let out = strip_system_labels_comment(raw_in);
         assert_eq!(out, "<!-- @synapse-labels: user -->\n# Body\n");
     }
 
-    /// 没有 `@synapse-labels:` 行时原样返回
+    /// frontmatter 文件：labels 写回净化后的 CSV 标量（Q6.a）
+    #[test]
+    fn frontmatter_labels_rewritten_without_system_labels() {
+        let raw_in = "---\nlabels: recently-modified, important\n状态: 稳定\n---\n\n# Body\n";
+        let dir = tempfile::tempdir().unwrap();
+        let content_path = dir.path().join("a.md");
+        std::fs::write(&content_path, raw_in).unwrap();
+        let out = strip_system_labels(raw_in, &content_path);
+        assert!(out.contains("labels: important"), "{out}");
+        assert!(!out.contains("recently-modified"), "{out}");
+        assert!(out.contains("状态: 稳定"), "{out}");
+    }
+
+    /// frontmatter 文件：净化后为空 → 删除 labels 键
+    #[test]
+    fn frontmatter_labels_removed_when_empty() {
+        let raw_in = "---\nlabels: orphan\n---\n\n# Body\n";
+        let dir = tempfile::tempdir().unwrap();
+        let content_path = dir.path().join("a.md");
+        std::fs::write(&content_path, raw_in).unwrap();
+        let out = strip_system_labels(raw_in, &content_path);
+        assert!(!out.contains("labels"), "{out}");
+        assert!(out.contains("---\n---\n") || out.lines().filter(|l| l.trim() == "---").count() == 2, "{out}");
+    }
+
+    /// 没有 labels 时原样返回
     #[test]
     fn no_op_when_no_labels_line() {
         let raw_in = "# Body\nplain content\n";
-        let out = strip_system_labels(raw_in);
+        let out = strip_system_labels(raw_in, std::path::Path::new("/nonexistent/a.md"));
         assert_eq!(out, raw_in);
     }
 
@@ -170,7 +223,7 @@ mod tests {
     #[test]
     fn preserves_trailing_newline() {
         let raw_in = "# Body\n";
-        let out = strip_system_labels(raw_in);
+        let out = strip_system_labels(raw_in, std::path::Path::new("/nonexistent/a.md"));
         assert_eq!(out, raw_in);
         assert!(out.ends_with('\n'));
     }

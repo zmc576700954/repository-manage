@@ -4,6 +4,7 @@ import { RightPanel } from './RightPanel';
 import { ValidationPanel } from './ValidationPanel';
 import { Settings } from '@/views/Settings';
 import { DetailPanel } from '@/views/DetailPanel';
+import { KbHomePanel } from '@/views/KbHomePanel';
 
 export const RightPanelStack: React.FC = () => {
   const { openPanels, close, width } = usePanelStore();
@@ -38,5 +39,7 @@ const PanelContent: React.FC<{ type: PanelType }> = ({ type }) => {
       return <Settings />;
     case 'filter':
       return <div className="p-4 text-sm text-gray-500">Filter placeholder</div>;
+    case 'home':
+      return <KbHomePanel />;
   }
 };

@@ -16,7 +16,7 @@
 |---|---|---|---|
 | 0 | 噪声清除三件套（E4 豁免 / I2 口径 / YAML 未知键保留） | ✅ 完成 2026-11-17 | [batch-0.md](batch-0.md) |
 | 0.5 | CLI 接入 kaiwu 回归门禁（适配脚本 + run_regression.sh） | ✅ 完成（接线级；全链路待模型目录恢复） | [batch-0.5.md](batch-0.5.md) |
-| 1 | 写路径改造 + 状态迁出 + 解析健壮化 + 级联重写 + README 首页 + 状态枚举 | 未开始 | batch-1.md |
+| 1 | 写路径改造 + 状态迁出 + 解析健壮化 + 级联重写 + README 首页 + 状态枚举 | ✅ 完成（自动化验收过；GUI 验收步骤见文档） | [batch-1.md](batch-1.md) |
 | 2 | 规范正文归位 + 双实现一致性 CI + fixtures | 未开始 | batch-2.md |
 | 3 | stdio MCP server（三层工具面） | 未开始 | batch-3.md |
 | 4 | EditAgent / ReviewerAgent（Python 独立进程） | 未开始 | batch-4.md |

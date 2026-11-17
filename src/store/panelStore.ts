@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { useAppStore } from './useAppStore';
 
-export type PanelType = 'detail' | 'validation' | 'settings' | 'filter' | 'fix';
+export type PanelType = 'detail' | 'validation' | 'settings' | 'filter' | 'fix' | 'home';
 
 const MAX_PANELS = 3;
 

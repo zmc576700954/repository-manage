@@ -58,6 +58,7 @@ pub fn indexes_dir() -> PathBuf {
     app_data_dir().join("indexes")
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;

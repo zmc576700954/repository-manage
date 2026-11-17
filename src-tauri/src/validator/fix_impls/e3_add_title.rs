@@ -29,18 +29,17 @@ pub fn descriptor_and_apply(
 }
 
 fn inject_synapse_title(raw: &str, title: &str) -> String {
-    if raw.lines().any(|l| l.contains("@synapse-title:")) {
+    // Q6.a：title 写 frontmatter（唯一真源）。已有 title（frontmatter 或旧注释）→ no-op。
+    if crate::parser::fm_writer::has_key(raw, "title") || raw.contains("@synapse-title:") {
         return raw.to_string();
     }
-    let inject = format!("<!-- @synapse-title: {} -->\n", title);
-    if let Some(pos) = raw.find("---\n") {
-        let mut out = String::with_capacity(raw.len() + inject.len());
-        out.push_str(&raw[..pos]);
-        out.push_str(&inject);
-        out.push_str(&raw[pos..]);
-        return out;
-    }
-    format!("{}{}", inject, raw)
+    crate::parser::fm_writer::apply_edits(
+        raw,
+        &crate::parser::fm_writer::FrontmatterEdit::set(
+            "title",
+            crate::parser::fm_writer::FmValue::Str(title.to_string()),
+        ),
+    )
 }
 
 #[cfg(test)]
@@ -73,6 +72,7 @@ mod tests {
             ignored_rules: vec![],
             extra_meta: vec![],
             declares_tags_system: false,
+            doc_code: None,
             validation: vec![],
         }
     }
@@ -88,9 +88,8 @@ mod tests {
         descriptor_and_apply(&entry, &dir).unwrap();
         let result = std::fs::read_to_string(&content_path).unwrap();
         assert!(
-            result.contains("@synapse-title: my-entry"),
-            "should inject title comment, got: {}",
-            result
+            result.starts_with("---\ntitle: my-entry\n---\n"),
+            "Q6.a: frontmatter title first, got: {result}"
         );
     }
 
@@ -105,11 +104,9 @@ mod tests {
         let entry = make_entry(content_path.clone());
         descriptor_and_apply(&entry, &dir).unwrap();
         let result = std::fs::read_to_string(&content_path).unwrap();
-        let title_pos = result.find("@synapse-title:").unwrap();
-        let fm_pos = result.find("---\n").unwrap();
         assert!(
-            title_pos < fm_pos,
-            "title comment should precede frontmatter"
+            result.starts_with("---\ncolor: red\ntitle: ") && result.contains("---\n\n# Body"),
+            "Q6.a: title appended into the existing frontmatter: {result}"
         );
     }
 
@@ -130,6 +127,6 @@ mod tests {
         let entry = make_entry(content_path.clone());
         descriptor_and_apply(&entry, &dir).unwrap();
         let result = std::fs::read_to_string(&content_path).unwrap();
-        assert!(result.contains("@synapse-title: my-entry"));
+        assert!(result.contains("title: my-entry"), "{result}");
     }
 }

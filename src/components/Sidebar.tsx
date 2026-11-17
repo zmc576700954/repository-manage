@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/store/useAppStore';
-import { usePanelStore } from '@/store/panelStore';
+import { usePanelStore, type PanelType } from '@/store/panelStore';
 import { EntryDialog, type EntryDialogMode } from '@/components/EntryDialog';
 import { ContextMenu, type MenuItem } from '@/components/ContextMenu';
 import type { Entry } from '@shared/types';
@@ -183,13 +183,22 @@ export function Sidebar() {
           </div>
         </div>
         {activeKb ? (
-          <button
-            onClick={() => loadEntries()}
-            className="mt-2 w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-50"
-            title={t('reloadTitle')}
-          >
-            {t('reloadButton')}
-          </button>
+          <>
+            <button
+              onClick={() => openPanel('home')}
+              className="mt-2 w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-50"
+              title={t('homeTitle')}
+            >
+              {t('homeButton')}
+            </button>
+            <button
+              onClick={() => loadEntries()}
+              className="mt-2 w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-500 hover:bg-gray-50"
+              title={t('reloadTitle')}
+            >
+              {t('reloadButton')}
+            </button>
+          </>
         ) : null}
         <SearchBox />
       </div>

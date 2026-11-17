@@ -14,6 +14,8 @@ import MapViewZh from '../views/MapView.zh.json';
 import MapViewEn from '../views/MapView.en.json';
 import EntryDialogZh from '../components/EntryDialog.zh.json';
 import EntryDialogEn from '../components/EntryDialog.en.json';
+import KbHomePanelZh from '../views/KbHomePanel.zh.json';
+import KbHomePanelEn from '../views/KbHomePanel.en.json';
 import DetailPanelZh from '../views/DetailPanel.zh.json';
 import DetailPanelEn from '../views/DetailPanel.en.json';
 import ValidationPanelZh from '../components/ValidationPanel.zh.json';
@@ -39,10 +41,10 @@ import RenameEntryDialogEn from '../components/i18n/RenameEntryDialog.en.json';
 import ContextMenuZh from '../components/ContextMenu.zh.json';
 import ContextMenuEn from '../components/ContextMenu.en.json';
 
-export const NS = ['App', 'Errors', 'Settings', 'Sidebar', 'NodeCard', 'RelationDialog', 'MapView', 'EntryDialog', 'DetailPanel', 'ValidationPanel', 'Validation', 'Error', 'Fix', 'FilterPanel', 'RightPanel', 'SearchBox', 'MarkdownView', 'EntryMetadataEditor', 'RenameEntryDialog', 'ContextMenu'] as const;
+export const NS = ['App', 'Errors', 'Settings', 'Sidebar', 'NodeCard', 'RelationDialog', 'MapView', 'EntryDialog', 'DetailPanel', 'ValidationPanel', 'Validation', 'Error', 'Fix', 'FilterPanel', 'RightPanel', 'SearchBox', 'MarkdownView', 'EntryMetadataEditor', 'RenameEntryDialog', 'ContextMenu', 'KbHomePanel'] as const;
 export type Namespace = (typeof NS)[number];
 
 export const resources = {
-  zh: { App: AppZh, Errors: ErrorsZh, Settings: SettingsZh, Sidebar: SidebarZh, NodeCard: NodeCardZh, RelationDialog: RelationDialogZh, MapView: MapViewZh, EntryDialog: EntryDialogZh, DetailPanel: DetailPanelZh, ValidationPanel: ValidationPanelZh, Validation: ValidationZh, Error: ErrorZh, Fix: FixZh, FilterPanel: FilterPanelZh, RightPanel: RightPanelZh, SearchBox: SearchBoxZh, MarkdownView: MarkdownViewZh, EntryMetadataEditor: EntryMetadataEditorZh, RenameEntryDialog: RenameEntryDialogZh, ContextMenu: ContextMenuZh },
-  en: { App: AppEn, Errors: ErrorsEn, Settings: SettingsEn, Sidebar: SidebarEn, NodeCard: NodeCardEn, RelationDialog: RelationDialogEn, MapView: MapViewEn, EntryDialog: EntryDialogEn, DetailPanel: DetailPanelEn, ValidationPanel: ValidationPanelEn, Validation: ValidationEn, Error: ErrorEn, Fix: FixEn, FilterPanel: FilterPanelEn, RightPanel: RightPanelEn, SearchBox: SearchBoxEn, MarkdownView: MarkdownViewEn, EntryMetadataEditor: EntryMetadataEditorEn, RenameEntryDialog: RenameEntryDialogEn, ContextMenu: ContextMenuEn },
+  zh: { App: AppZh, KbHomePanel: KbHomePanelZh, Errors: ErrorsZh, Settings: SettingsZh, Sidebar: SidebarZh, NodeCard: NodeCardZh, RelationDialog: RelationDialogZh, MapView: MapViewZh, EntryDialog: EntryDialogZh, DetailPanel: DetailPanelZh, ValidationPanel: ValidationPanelZh, Validation: ValidationZh, Error: ErrorZh, Fix: FixZh, FilterPanel: FilterPanelZh, RightPanel: RightPanelZh, SearchBox: SearchBoxZh, MarkdownView: MarkdownViewZh, EntryMetadataEditor: EntryMetadataEditorZh, RenameEntryDialog: RenameEntryDialogZh, ContextMenu: ContextMenuZh },
+  en: { App: AppEn, KbHomePanel: KbHomePanelEn, Errors: ErrorsEn, Settings: SettingsEn, Sidebar: SidebarEn, NodeCard: NodeCardEn, RelationDialog: RelationDialogEn, MapView: MapViewEn, EntryDialog: EntryDialogEn, DetailPanel: DetailPanelEn, ValidationPanel: ValidationPanelEn, Validation: ValidationEn, Error: ErrorEn, Fix: FixEn, FilterPanel: FilterPanelEn, RightPanel: RightPanelEn, SearchBox: SearchBoxEn, MarkdownView: MarkdownViewEn, EntryMetadataEditor: EntryMetadataEditorEn, RenameEntryDialog: RenameEntryDialogEn, ContextMenu: ContextMenuEn },
 } as const;

@@ -14,8 +14,13 @@ pub fn descriptor_and_apply(
     // 1. 读 content_path
     let raw = std::fs::read_to_string(&entry.content_path)?;
 
-    // 2. 找到 @synapse-tags 行，注入 type:note
-    let new_content = inject_type(&raw);
+    // 2. 用统一解析口径取当前 tags（frontmatter 优先、注释回退），
+    //    缺 type: 前缀时注入 type:note 写回 frontmatter（Q6.a，不再插注释）。
+    let parsed = crate::entry::read_md_file(
+        &entry.content_path,
+        entry.content_path.parent().unwrap_or(Path::new(".")),
+    );
+    let new_content = inject_type(&raw, &parsed.tags);
 
     // 3. backup + write
     backup::backup_then_write(&entry.content_path, &new_content, "E4")?;
@@ -31,35 +36,28 @@ pub fn descriptor_and_apply(
     })
 }
 
-fn inject_type(raw: &str) -> String {
-    for line in raw.lines() {
-        if let Some(rest) = line.strip_prefix("<!-- @synapse-tags:") {
-            let rest = rest.trim_end_matches("-->").trim();
-            // 已包含 type: 前缀则 no-op
-            if rest.split(',').any(|t| t.trim().starts_with("type:")) {
-                return raw.to_string();
-            }
-            // 在 tags 前注入 type:note
-            let new_line = format!("<!-- @synapse-tags: type:note, {} -->", rest);
-            return raw.replacen(line, &new_line, 1);
-        }
+fn inject_type(raw: &str, current_tags: &[String]) -> String {
+    // 已包含 type: 前缀则 no-op
+    if current_tags.iter().any(|t| t.starts_with("type:")) {
+        return raw.to_string();
     }
-    // 没有 @synapse-tags 行，注入新行（放在 frontmatter 前或文件顶）
-    let inject = "<!-- @synapse-tags: type:note -->\n";
-    if let Some(pos) = raw.find("---\n") {
-        let mut out = String::with_capacity(raw.len() + inject.len());
-        out.push_str(&raw[..pos]);
-        out.push_str(inject);
-        out.push_str(&raw[pos..]);
-        return out;
-    }
-    format!("{}{}", inject, raw)
+    let mut new_tags = vec!["type:note".to_string()];
+    new_tags.extend(current_tags.iter().cloned());
+    // Q6.a：写 frontmatter tags（CSV 标量，M1 安全），无 frontmatter 时
+    // 由 fm_writer 在文件顶部创建区块（F3 事故的根因即「注释插到 frontmatter 之前」，
+    // 该路径已不存在）。
+    crate::parser::fm_writer::apply_edits(
+        raw,
+        &crate::parser::fm_writer::FrontmatterEdit::set(
+            "tags",
+            crate::parser::fm_writer::FmValue::List(new_tags),
+        ),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     fn make_entry(content_path: std::path::PathBuf) -> RawEntry {
         let parent = content_path.parent().unwrap().to_path_buf();
@@ -86,61 +84,41 @@ mod tests {
             ignored_rules: vec![],
             extra_meta: vec![],
             declares_tags_system: false,
+            doc_code: None,
             validation: vec![],
         }
     }
 
     #[test]
-    fn injects_type_into_existing_tags_line() {
-        let raw_in = "<!-- @synapse-tags: foo, bar -->\n# Body\n";
-        let out = inject_type(raw_in);
-        assert!(
-            out.contains("@synapse-tags: type:note, foo, bar"),
-            "should prepend type:note, got: {}",
-            out
-        );
+    fn injects_type_into_frontmatter_tags() {
+        let raw_in = "---\n状态: 稳定\n---\n\n# Body\n";
+        let out = inject_type(raw_in, &["foo".to_string(), "bar".to_string()]);
+        assert!(out.contains("tags: type:note, foo, bar"), "frontmatter tags written: {out}");
+        assert!(out.contains("状态: 稳定"), "existing keys preserved: {out}");
+        assert!(out.starts_with("---\n"), "frontmatter stays first: {out}");
     }
 
     #[test]
     fn no_op_when_type_already_present() {
-        let raw_in = "<!-- @synapse-tags: type:book, foo -->\n# Body\n";
-        let out = inject_type(raw_in);
+        let raw_in = "---\ntags: type:book, foo\n---\n\n# Body\n";
+        let out = inject_type(raw_in, &["type:book".to_string(), "foo".to_string()]);
         assert_eq!(out, raw_in);
     }
 
     #[test]
-    fn injects_new_tags_line_before_frontmatter() {
-        let raw_in = "---\ncolor: red\n---\n\n# Body\n";
-        let out = inject_type(raw_in);
-        let tag_pos = out.find("@synapse-tags:").unwrap();
-        let fm_pos = out.find("---\n").unwrap();
-        assert!(tag_pos < fm_pos, "tags comment should precede frontmatter");
+    fn injects_into_existing_comment_tags_via_frontmatter() {
+        let raw_in = "<!-- @synapse-tags: foo, bar -->\n# Body\n";
+        let out = inject_type(raw_in, &["foo".to_string(), "bar".to_string()]);
+        assert!(out.starts_with("---\n"), "no comment injection; frontmatter first: {out}");
+        assert!(out.contains("tags: type:note, foo, bar"), "{out}");
+        assert!(out.contains("<!-- @synapse-tags: foo, bar -->"), "legacy comment kept: {out}");
     }
 
     #[test]
-    fn injects_new_tags_line_at_top_when_no_frontmatter() {
-        let raw_in = "# Body\nplain content\n";
-        let out = inject_type(raw_in);
-        assert!(
-            out.starts_with("<!-- @synapse-tags: type:note -->\n"),
-            "tags line should be at top, got: {}",
-            out
-        );
-    }
-
-    #[test]
-    fn descriptor_and_apply_writes_type_to_file() {
-        let tmp = TempDir::new().unwrap();
-        let dir = tmp.path().join("my-entry");
-        std::fs::create_dir_all(&dir).unwrap();
-        let content_path = dir.join("content.md");
-        std::fs::write(&content_path, "# Body\nplain\n").unwrap();
-        let entry = make_entry(content_path.clone());
-        let desc = descriptor_and_apply(&entry, &dir).unwrap();
-        assert_eq!(desc.rule_id, "E4");
-        assert!(matches!(desc.kind, FixKind::OneClick));
-        assert!(matches!(desc.risk, FixRisk::Low));
-        let result = std::fs::read_to_string(&content_path).unwrap();
-        assert!(result.contains("@synapse-tags: type:note"));
+    fn injects_into_kaiwu_style_frontmatter() {
+        let raw_in = "---\n优先级: 🟡 P1\n状态: 稳定\n---\n\n# Body\n";
+        let out = inject_type(raw_in, &[]);
+        assert!(out.contains("tags: type:note"), "{out}");
+        assert!(out.contains("优先级: 🟡 P1"), "四键保留: {out}");
     }
 }

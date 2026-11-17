@@ -34,17 +34,20 @@ pub fn descriptor_and_apply(
     })
 }
 
-/// 替换已存在的 `@synapse-id: <value>` 行中的 value。
-/// 若文件不含 `@synapse-id:` 行则原样返回（应由 E1 处理）。
+/// Q6.a：id 写 frontmatter（唯一真源）。旧注释 id 若存在则成为 stale
+/// （只读兼容，解析侧 frontmatter 优先）。文件既无 frontmatter id 也无
+/// 注释 id → 原样返回（应由 E1 处理）。
 fn replace_synapse_id(raw: &str, new_id: &str) -> String {
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("<!-- @synapse-id:") && trimmed.ends_with("-->") {
-            let new_line = format!("<!-- @synapse-id: {} -->\n", new_id);
-            return raw.replacen(line, &new_line, 1);
-        }
+    if !crate::parser::fm_writer::has_key(raw, "id") && !raw.contains("@synapse-id:") {
+        return raw.to_string();
     }
-    raw.to_string()
+    crate::parser::fm_writer::apply_edits(
+        raw,
+        &crate::parser::fm_writer::FrontmatterEdit::set(
+            "id",
+            crate::parser::fm_writer::FmValue::Str(new_id.to_string()),
+        ),
+    )
 }
 
 #[cfg(test)]
@@ -76,6 +79,7 @@ mod tests {
             ignored_rules: vec![],
             extra_meta: vec![],
             declares_tags_system: false,
+            doc_code: None,
             validation: vec![],
         }
     }
@@ -90,14 +94,16 @@ mod tests {
         let entry = make_entry(dir.clone(), content_path.clone());
         descriptor_and_apply(&entry, &dir, false).unwrap();
         let result = std::fs::read_to_string(&content_path).unwrap();
+        // Q6.a：id 写 frontmatter（唯一真源）；旧注释 id 保留（只读兼容，
+        // 解析侧 frontmatter 优先）。E2 复检按 frontmatter id 通过。
         assert!(
-            result.contains("@synapse-id: react-hooks"),
-            "id should be rewritten to match dir name, got: {}",
+            result.contains("---\nid: react-hooks\n---\n"),
+            "frontmatter id written, got: {}",
             result
         );
         assert!(
-            !result.contains("@synapse-id: old-id"),
-            "old id should be replaced, got: {}",
+            !result.contains("---\nid: old-id"),
+            "frontmatter old id should be replaced, got: {}",
             result
         );
     }

@@ -23,6 +23,10 @@ pub struct AppState {
     pub index: Arc<RwLock<Index>>,
     pub kbs: Arc<RwLock<KbRegistry>>,
     pub current_kb: Arc<RwLock<Option<KBInfo>>>,
+    /// 运行时状态目录的基目录（Q10.a）：布局与版本历史放
+    /// `<runtime_dir_base>/<kb_id>/`。生产 = `paths::indexes_dir()`；
+    /// 测试注入 tempdir，避免污染真实 app data。
+    pub runtime_dir_base: PathBuf,
     /// Cached latest validation report for the active KB.
     /// `None` until first validation run; updated by `validate_kb` command.
     pub validation_report: Arc<RwLock<Option<ValidationReport>>>,
@@ -235,4 +239,51 @@ pub(crate) fn normalize_watch_path(path: &Path) -> PathBuf {
         (Some(parent), Some(name)) => parent.join(name),
         _ => path.to_path_buf(),
     }
+}
+
+/// Q10.a 迁移：把 KB 目录里的旧运行时产物搬到 app data 的运行时目录。
+///
+/// - `<kb_root>/.synapse-layout.json` → `<runtime_dir>/layout.json`
+/// - `<kb_root>/.synapse/history/` → `<runtime_dir>/history/`
+///
+/// 幂等：源不存在即跳过；新旧并存时以新位置为准（旧文件删除）；
+/// `.synapse` 空壳目录 best-effort 清理。任何一步失败不 panic——
+/// 迁移是启动辅助，不应阻断 rebuild（错误返回给调用方记录）。
+pub fn migrate_legacy_runtime_state(
+    kb_root: &Path,
+    runtime_dir: &Path,
+) -> Result<(), std::io::Error> {
+    std::fs::create_dir_all(runtime_dir)?;
+
+    let old_layout = kb_root.join(".synapse-layout.json");
+    let new_layout = runtime_dir.join("layout.json");
+    if old_layout.exists() {
+        if new_layout.exists() {
+            std::fs::remove_file(&old_layout)?;
+        } else {
+            std::fs::rename(&old_layout, &new_layout)?;
+        }
+    }
+
+    let old_history = kb_root.join(".synapse").join("history");
+    let new_history = runtime_dir.join("history");
+    if old_history.is_dir() {
+        if new_history.exists() {
+            std::fs::remove_dir_all(&old_history)?;
+        } else {
+            std::fs::rename(&old_history, &new_history)?;
+        }
+    }
+
+    // best-effort 清理空壳 `.synapse/`
+    let synapse_dir = kb_root.join(".synapse");
+    if synapse_dir.is_dir() {
+        let is_empty = std::fs::read_dir(&synapse_dir)
+            .map(|mut d| d.next().is_none())
+            .unwrap_or(false);
+        if is_empty {
+            let _ = std::fs::remove_dir(&synapse_dir);
+        }
+    }
+    Ok(())
 }

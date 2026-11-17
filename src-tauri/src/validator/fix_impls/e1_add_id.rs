@@ -34,18 +34,18 @@ pub fn descriptor_and_apply(
 }
 
 fn inject_synapse_id(raw: &str, derived: &str) -> String {
-    if raw.lines().any(|l| l.contains("@synapse-id:")) {
+    // Q6.a：id 写 frontmatter（唯一真源），不再插 HTML 注释。
+    // 已有 id（frontmatter 或旧注释）→ no-op。
+    if crate::parser::fm_writer::has_key(raw, "id") || raw.contains("@synapse-id:") {
         return raw.to_string();
     }
-    let inject = format!("<!-- @synapse-id: {} -->\n", derived);
-    if let Some(pos) = raw.find("---\n") {
-        let mut out = String::with_capacity(raw.len() + inject.len());
-        out.push_str(&raw[..pos]);
-        out.push_str(&inject);
-        out.push_str(&raw[pos..]);
-        return out;
-    }
-    format!("{}{}", inject, raw)
+    crate::parser::fm_writer::apply_edits(
+        raw,
+        &crate::parser::fm_writer::FrontmatterEdit::set(
+            "id",
+            crate::parser::fm_writer::FmValue::Str(derived.to_string()),
+        ),
+    )
 }
 
 #[cfg(test)]
@@ -79,6 +79,7 @@ mod tests {
             ignored_rules: vec![],
             extra_meta: vec![],
             declares_tags_system: false,
+            doc_code: None,
             validation: vec![],
         }
     }
@@ -93,7 +94,7 @@ mod tests {
         let entry = make_entry(dir.clone(), content_path.clone(), "# Hooks\n");
         descriptor_and_apply(&entry, &dir).unwrap();
         let result = std::fs::read_to_string(&content_path).unwrap();
-        assert!(result.contains("@synapse-id: react-hooks"));
+        assert!(result.starts_with("---\nid: react-hooks\n---\n"), "Q6.a: frontmatter id first: {result}");
     }
 
     #[test]
@@ -107,9 +108,10 @@ mod tests {
         let entry = make_entry(dir.clone(), content_path.clone(), body);
         descriptor_and_apply(&entry, &dir).unwrap();
         let result = std::fs::read_to_string(&content_path).unwrap();
-        let id_pos = result.find("@synapse-id:").unwrap();
-        let fm_pos = result.find("---\n").unwrap();
-        assert!(id_pos < fm_pos, "id comment should precede frontmatter");
+        assert!(
+            result.starts_with("---\ncolor: red\nid: yfm\n---\n"),
+            "Q6.a: id appended into the existing frontmatter, no comment injection: {result}"
+        );
     }
 
     #[test]

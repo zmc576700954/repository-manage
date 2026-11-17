@@ -53,12 +53,7 @@ pub fn compute_all(entries: &[RawEntry], kb_root: &Path) -> Vec<ValidationIssue>
         };
         // [[xxx]] 双链
         for target in &entry.linked_targets {
-            if let Some(target_id) = resolve_target(
-                target,
-                &lookups.id_set,
-                &lookups.by_stem,
-                &lookups.by_rel_path,
-            ) {
+            if let Some(target_id) = resolve_target(target, entry.dir.as_deref(), &lookups) {
                 push_edge(&target_id);
             }
         }
@@ -72,12 +67,7 @@ pub fn compute_all(entries: &[RawEntry], kb_root: &Path) -> Vec<ValidationIssue>
             if is_attachment_url(cleaned) {
                 continue;
             }
-            if let Some(target_id) = resolve_target(
-                cleaned,
-                &lookups.id_set,
-                &lookups.by_stem,
-                &lookups.by_rel_path,
-            ) {
+            if let Some(target_id) = resolve_target(cleaned, entry.dir.as_deref(), &lookups) {
                 push_edge(&target_id);
             }
         }
@@ -169,6 +159,7 @@ mod tests {
             ignored_rules: vec![],
             extra_meta: vec![],
             declares_tags_system: false,
+            doc_code: None,
             validation: vec![],
         }
     }

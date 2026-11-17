@@ -3,6 +3,8 @@
   "noKbPath": "Add one in Knowledge Bases",
   "reloadButton": "↻ Reload from disk",
   "reloadTitle": "Reload entries from disk",
+  "homeButton": "📖 KB homepage",
+  "homeTitle": "Open the KB homepage (root README)",
   "createInRootTitle": "Create a new document in the KB root",
   "createInGroupTitle": "Create a new document under \"{{path}}\"",
   "createChildTitle": "Create a child document for \"{{title}}\"",

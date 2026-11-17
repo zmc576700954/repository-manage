@@ -7,10 +7,28 @@ interface Props {
   entry: Entry;
 }
 
-const STATUS_OPTIONS = ['stable', 'draft', 'wip', 'deprecated'] as const;
+// D3 状态枚举统一：canonical 用规范中文枚举（与 kaiwu M3a 一致，括号注记
+// 允许但编辑器只提供基准值）；旧英文自由文本保留为只读兼容选项，
+// 用户选中 canonical 后即被替换。展示标签双内建（zh/en），不入 i18n 键。
+const STATUS_OPTIONS = ['草案', '模板', '稳定', '需持续监控', '过期', '已归档'] as const;
+
+const STATUS_DISPLAY: Record<string, { zh: string; en: string }> = {
+  草案: { zh: '草案', en: 'Draft' },
+  模板: { zh: '模板', en: 'Template' },
+  稳定: { zh: '稳定', en: 'Stable' },
+  需持续监控: { zh: '需持续监控', en: 'Monitor' },
+  过期: { zh: '过期', en: 'Outdated' },
+  已归档: { zh: '已归档', en: 'Archived' },
+  // 旧自由文本（只读兼容显示）
+  stable: { zh: '稳定（旧）', en: 'Stable (legacy)' },
+  draft: { zh: '草稿（旧）', en: 'Draft (legacy)' },
+  wip: { zh: '撰写中（旧）', en: 'WIP (legacy)' },
+  deprecated: { zh: '遗弃（旧）', en: 'Deprecated (legacy)' },
+};
 
 export function EntryMetadataEditor({ entry }: Props) {
-  const { t } = useTranslation('EntryMetadataEditor');
+  const { t, i18n } = useTranslation('EntryMetadataEditor');
+  const lang = i18n.language?.startsWith('zh') ? 'zh' : 'en';
   const updateMetadata = useAppStore((s) => s.updateMetadata);
 
   // Local controlled state mirrors entry, so rapid edits don't fight
@@ -19,7 +37,7 @@ export function EntryMetadataEditor({ entry }: Props) {
   const [title, setTitle] = useState(entry.title);
   const [tags, setTags] = useState<string[]>(entry.tags);
   const [labels, setLabels] = useState<string[]>(entry.labels);
-  const [status, setStatus] = useState<string>(entry.status ?? 'stable');
+  const [status, setStatus] = useState<string>(entry.status ?? '草案');
   const [tagInput, setTagInput] = useState('');
   const [labelInput, setLabelInput] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +52,7 @@ export function EntryMetadataEditor({ entry }: Props) {
   // 草稿，否则面板会一直展示挂载时的旧值。焦点在面板内或有提交未完成时
   // 跳过，避免打断输入、抢焦点或覆盖用户刚敲的内容。
   const externalSnapshot = useMemo(
-    () => JSON.stringify([entry.title, entry.tags, entry.labels, entry.status ?? 'stable']),
+    () => JSON.stringify([entry.title, entry.tags, entry.labels, entry.status ?? '草案']),
     [entry.title, entry.tags, entry.labels, entry.status]
   );
   const syncedSnapshotRef = useRef(externalSnapshot);
@@ -50,7 +68,7 @@ export function EntryMetadataEditor({ entry }: Props) {
     setTitle(entry.title);
     setTags(entry.tags);
     setLabels(entry.labels);
-    setStatus(entry.status ?? 'stable');
+    setStatus(entry.status ?? '草案');
   }, [externalSnapshot, entry.title, entry.tags, entry.labels, entry.status]);
 
   const commit = useCallback(
@@ -75,7 +93,7 @@ export function EntryMetadataEditor({ entry }: Props) {
           setTitle(entry.title);
           setTags(entry.tags);
           setLabels(entry.labels);
-          setStatus(entry.status ?? 'stable');
+          setStatus(entry.status ?? '草案');
         })
         .finally(() => {
           pendingCommitsRef.current -= 1;
@@ -242,9 +260,16 @@ export function EntryMetadataEditor({ entry }: Props) {
           }}
           className="rounded-md border border-gray-300 px-2 py-1 text-sm"
         >
+          {/* 非规范旧值（含括号注记的自定义值）保底展示，避免静默改写 */}
+          {!STATUS_OPTIONS.includes(status as (typeof STATUS_OPTIONS)[number]) &&
+            status !== '' && (
+              <option key={status} value={status}>
+                {STATUS_DISPLAY[status]?.[lang] ?? status}
+              </option>
+            )}
           {STATUS_OPTIONS.map((s) => (
             <option key={s} value={s}>
-              {t(`status${s.charAt(0).toUpperCase() + s.slice(1)}`)}
+              {STATUS_DISPLAY[s]?.[lang] ?? s}
             </option>
           ))}
         </select>

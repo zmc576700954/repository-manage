@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
-const LAYOUT_FILENAME: &str = ".synapse-layout.json";
+/// 布局文件名。Q10.a 后存放于 app data 的 `indexes/<kb_id>/layout.json`，
+/// 不再落 KB 目录（旧 `.synapse-layout.json` 由迁移逻辑搬到新位置）。
+const LAYOUT_FILENAME: &str = "layout.json";
 
 /// `.synapse-layout.json` 的读-改-写是“读整文件 → 改一个 key → 写回整文件”，
 /// 两个并发写会互相覆盖（后写者基于旧快照）。Tauri 命令层有 `write_lock`，
@@ -34,9 +36,10 @@ impl Layout {
     }
 }
 
-/// 从 kb 根目录加载布局；如果不存在则返回空布局。
-pub fn load_layout(kb_root: &Path) -> Layout {
-    let layout_path = kb_root.join(LAYOUT_FILENAME);
+/// 从 KB 的运行时状态目录（app data `indexes/<kb_id>/`）加载布局；
+/// 不存在则返回空布局。
+pub fn load_layout(runtime_dir: &Path) -> Layout {
+    let layout_path = runtime_dir.join(LAYOUT_FILENAME);
     if !layout_path.exists() {
         return Layout::default();
     }
@@ -47,14 +50,16 @@ pub fn load_layout(kb_root: &Path) -> Layout {
         .unwrap_or_default()
 }
 
-/// 保存布局到 kb 根目录的 .synapse-layout.json。
+/// 保存布局到运行时状态目录的 layout.json（原子写）。
 /// 先写临时文件再原子 rename，避免并发的 `load_layout` 读到写了一半的 JSON
 /// （解析失败会回退成空布局，导致图谱位置瞬间回弹）。
-pub fn save_layout(kb_root: &Path, layout: &Layout) -> std::io::Result<()> {
-    let layout_path = kb_root.join(LAYOUT_FILENAME);
+pub fn save_layout(runtime_dir: &Path, layout: &Layout) -> std::io::Result<()> {
+    // 运行时目录可能尚不存在（新 KB / 新装的 app data）——先建再写。
+    std::fs::create_dir_all(runtime_dir)?;
+    let layout_path = runtime_dir.join(LAYOUT_FILENAME);
     let json = serde_json::to_string_pretty(layout)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    let tmp_path = kb_root.join(format!("{LAYOUT_FILENAME}.tmp"));
+    let tmp_path = runtime_dir.join(format!("{LAYOUT_FILENAME}.tmp"));
     std::fs::write(&tmp_path, json)?;
     std::fs::rename(&tmp_path, layout_path)
 }
@@ -65,24 +70,24 @@ pub fn load_positions(kb_root: &Path) -> HashMap<String, NodePosition> {
 }
 
 /// 更新单个节点的位置并保存。
-pub fn update_position(kb_root: &Path, entry_id: &str, x: f64, y: f64) -> std::io::Result<()> {
+pub fn update_position(runtime_dir: &Path, entry_id: &str, x: f64, y: f64) -> std::io::Result<()> {
     let _guard = LAYOUT_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut layout = load_layout(kb_root);
+    let mut layout = load_layout(runtime_dir);
     layout.set(entry_id, x, y);
-    save_layout(kb_root, &layout)
+    save_layout(runtime_dir, &layout)
 }
 
 /// 将节点的位置从一个 entry id 转移到另一个 entry id。由
 /// `execute_rename` 使用——重命名节点后，节点仍在用户放置的位置。
 /// 如果旧 id 没有位置记录，这是一个静默的 no-op（新 id 也缺席）。
 /// 如果新 id 已经有位置，则保留现有的位置——不会覆盖现有的布局项。
-pub fn rename_key(kb_root: &Path, old_id: &str, new_id: &str) -> std::io::Result<()> {
+pub fn rename_key(runtime_dir: &Path, old_id: &str, new_id: &str) -> std::io::Result<()> {
     let _guard = LAYOUT_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut layout = load_layout(kb_root);
+    let mut layout = load_layout(runtime_dir);
     if let Some(pos) = layout.positions.remove(old_id) {
         // 仅在新 id 不存在时设置（不覆盖）。
         layout.positions.entry(new_id.to_string()).or_insert(pos);
-        save_layout(kb_root, &layout)?;
+        save_layout(runtime_dir, &layout)?;
     }
     Ok(())
 }

@@ -1,6 +1,7 @@
 //! 文档版本历史：快照存储、生成策略、回退、裁剪与阈值警告。
 //!
-//! 存储位置：`<kb-root>/.synapse/history/<entry-key>/`
+//! 存储位置：app data `indexes/<kb_id>/history/<entry-key>/`
+//! （Q10.a：运行时状态全部迁出 KB 目录，KB 目录 = 纯文档）。
 //! - `<version-id>.json`：元数据（作者、时间、来源、摘要、哈希、是否存正文）
 //! - `<version-id>.md`：正文副本（仅 ≤2MB 时保存）
 //!
@@ -55,7 +56,9 @@ impl SaveOrigin {
 
 #[derive(Debug, Clone)]
 pub struct ContentSavedEvent {
-    pub kb_root: PathBuf,
+    /// 版本历史根目录（Q10.a 后 = app data 的 `<runtime_dir>/`，
+    /// 不再是 KB 目录）。字段名保留语义：历史树的根。
+    pub history_root: PathBuf,
     pub entry_id: String,
     pub content_path: PathBuf,
     pub previous: String,
@@ -146,8 +149,8 @@ fn entry_key(entry_id: &str) -> String {
     format!("{safe}-{hash:08x}")
 }
 
-pub fn history_dir(kb_root: &Path, entry_id: &str) -> PathBuf {
-    kb_root.join(".synapse").join("history").join(entry_key(entry_id))
+pub fn history_dir(runtime_dir: &Path, entry_id: &str) -> PathBuf {
+    runtime_dir.join("history").join(entry_key(entry_id))
 }
 
 fn content_hash(content: &str) -> String {
@@ -334,7 +337,7 @@ fn record_version_at(
 /// 失败只记日志，由调用方决定——版本记录问题不能阻止用户保存。
 pub fn on_content_saved(event: &ContentSavedEvent) -> AppResult<Option<VersionMeta>> {
     record_version(
-        &event.kb_root,
+        &event.history_root,
         &event.entry_id,
         &event.previous,
         &event.next,
@@ -524,7 +527,7 @@ pub fn warnings(kb_root: &Path, entry_id: &str) -> AppResult<HistoryWarnings> {
         .iter()
         .filter(|v| v.origin != SaveOrigin::Trim)
         .count();
-    let (_, total_bytes) = dir_usage(&kb_root.join(".synapse").join("history"));
+    let (_, total_bytes) = dir_usage(&kb_root.join("history"));
     Ok(HistoryWarnings {
         version_count: count,
         per_entry_limit: PER_ENTRY_WARN_COUNT,
@@ -763,6 +766,6 @@ mod tests {
 
         // scanner 的产物过滤不得把历史当成条目（该断言在 scanner 测试中覆盖，
         // 这里只验证目录确实位于 `.synapse/` 下）。
-        assert!(old_dir.starts_with(kb.join(".synapse")));
+        assert!(old_dir.starts_with(kb.join("history")));
     }
 }

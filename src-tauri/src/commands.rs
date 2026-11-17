@@ -47,6 +47,48 @@ fn validate_filename(name: &str) -> AppResult<()> {
 /// Without this check, `create_entry_simple` and `create_entry_from_reference`
 /// would happily `join(...)` the stale path and write new content to a
 /// directory the user no longer considers their KB — confusing and silent.
+
+/// 读取 KB 根目录的 README 作为「首页」内容（D6：README = KB 首页）。
+/// README 不索引为条目、不入图谱、不参与关系解析；这里只做只读展示。
+/// 大小上限 2 MiB，超限返回错误（README 不该那么大）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn read_kb_readme(state: State<'_, AppState>) -> AppResult<Option<String>> {
+    let kb_root = kb_root_or_err(&state).await?;
+    const MAX_BYTES: u64 = 2 * 1024 * 1024;
+    for name in ["README.md", "readme.md", "Readme.md"] {
+        let path = kb_root.join(name);
+        if path.is_file() {
+            let meta = std::fs::metadata(&path).map_err(|e| {
+                AppError::io(format!("read_kb_readme: stat {}", path.display()), e)
+            })?;
+            if meta.len() > MAX_BYTES {
+                return Err(AppError::io(
+                    format!("read_kb_readme: {} too large", path.display()),
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("README exceeds {} bytes", MAX_BYTES),
+                    ),
+                ));
+            }
+            let content = std::fs::read_to_string(&path).map_err(|e| {
+                AppError::io(format!("read_kb_readme: read {}", path.display()), e)
+            })?;
+            return Ok(Some(content));
+        }
+    }
+    Ok(None)
+}
+
+/// 当前 KB 的运行时状态目录（app data `indexes/<kb_id>/`，Q10.a）。
+/// 布局与版本历史的读写一律用它，不再落 KB 目录。
+async fn runtime_dir_or_err(state: &AppState) -> AppResult<PathBuf> {
+    let id = {
+        let cur = state.current_kb.read().await;
+        cur.as_ref().ok_or_else(|| AppError::NoActiveKb)?.id.clone()
+    };
+    Ok(state.runtime_dir_base.join(&id))
+}
+
 async fn kb_root_or_err(state: &AppState) -> AppResult<PathBuf> {
     let path = {
         let cur = state.current_kb.read().await;
@@ -223,8 +265,9 @@ pub async fn active_kb_entry_count(state: State<'_, AppState>) -> AppResult<usiz
 pub async fn get_layout(
     state: State<'_, AppState>,
 ) -> AppResult<std::collections::HashMap<String, crate::layout_store::NodePosition>> {
+    let runtime_dir = runtime_dir_or_err(&state).await?;
     let kb_root = kb_root_or_err(&state).await?;
-    Ok(crate::layout_store::load_positions(&kb_root))
+    Ok(crate::layout_store::load_positions(&runtime_dir))
 }
 
 /// 保存单个节点的位置；由前端在拖拽结束时调用。
@@ -238,9 +281,9 @@ pub async fn save_node_position(
     x: f64,
     y: f64,
 ) -> AppResult<()> {
-    let kb_root = kb_root_or_err(&state).await?;
+    let runtime_dir = runtime_dir_or_err(&state).await?;
     let _guard = state.write_lock.lock().await;
-    crate::layout_store::update_position(&kb_root, &entry_id, x, y)?;
+    crate::layout_store::update_position(&runtime_dir, &entry_id, x, y)?;
     Ok(())
 }
 
@@ -345,8 +388,10 @@ async fn write_entry_content(
     // 版本 hook：显式保存即使内容未变也要调用（可能是自动保存刚写过盘但
     // 还没生成版本）；自动保存内容未变则完全跳过。
     if changed || origin != crate::history::SaveOrigin::Autosave {
+        // Q10.a：版本历史写运行时目录（app data），不落 KB 目录。
+        let history_root = runtime_dir_or_err(state).await?;
         if let Err(e) = crate::history::on_content_saved(&crate::history::ContentSavedEvent {
-            kb_root,
+            history_root,
             entry_id: id.to_string(),
             content_path: path,
             previous,
@@ -493,8 +538,8 @@ pub async fn list_entry_versions(
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<Vec<crate::history::VersionMeta>> {
-    let kb_root = kb_root_or_err(&state).await?;
-    crate::history::list_versions(&kb_root, &id)
+    let runtime_dir = runtime_dir_or_err(&state).await?;
+    crate::history::list_versions(&runtime_dir, &id)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -503,8 +548,8 @@ pub async fn get_entry_version_content(
     id: String,
     version_id: String,
 ) -> AppResult<Option<String>> {
-    let kb_root = kb_root_or_err(&state).await?;
-    crate::history::read_version_content(&kb_root, &id, &version_id)
+    let runtime_dir = runtime_dir_or_err(&state).await?;
+    crate::history::read_version_content(&runtime_dir, &id, &version_id)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -512,8 +557,8 @@ pub async fn get_history_warnings(
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<crate::history::HistoryWarnings> {
-    let kb_root = kb_root_or_err(&state).await?;
-    crate::history::warnings(&kb_root, &id)
+    let runtime_dir = runtime_dir_or_err(&state).await?;
+    crate::history::warnings(&runtime_dir, &id)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -522,8 +567,8 @@ pub async fn preview_trim_entry_history(
     id: String,
     keep_version_id: String,
 ) -> AppResult<crate::history::TrimPreview> {
-    let kb_root = kb_root_or_err(&state).await?;
-    crate::history::trim_preview(&kb_root, &id, &keep_version_id)
+    let runtime_dir = runtime_dir_or_err(&state).await?;
+    crate::history::trim_preview(&runtime_dir, &id, &keep_version_id)
 }
 
 /// 手动裁剪：不可恢复，UI 必须先展示预览并二次确认。
@@ -534,8 +579,8 @@ pub async fn trim_entry_history(
     keep_version_id: String,
 ) -> AppResult<crate::history::TrimOutcome> {
     let _guard = state.write_lock.lock().await;
-    let kb_root = kb_root_or_err(&state).await?;
-    crate::history::trim_history(&kb_root, &id, &keep_version_id)
+    let runtime_dir = runtime_dir_or_err(&state).await?;
+    crate::history::trim_history(&runtime_dir, &id, &keep_version_id)
 }
 
 /// 回退到指定版本：把旧正文写回当前文件，并追加一条带 `restored_from`
@@ -548,7 +593,8 @@ pub async fn restore_entry_version(
 ) -> AppResult<SaveEntryResult> {
     let _guard = state.write_lock.lock().await;
     let kb_root = kb_root_or_err(&state).await?;
-    let content = crate::history::read_version_content(&kb_root, &id, &version_id)?
+    let runtime_dir = runtime_dir_or_err(&state).await?;
+    let content = crate::history::read_version_content(&runtime_dir, &id, &version_id)?
         .ok_or_else(|| AppError::VersionContentUnavailable {
             version_id: version_id.clone(),
         })?;
@@ -1252,6 +1298,7 @@ pub async fn apply_fix(
         ignored_rules: vec![],
         extra_meta: vec![],
         declares_tags_system: false,
+        doc_code: None,
         validation: vec![],
     };
 
@@ -1598,6 +1645,7 @@ pub async fn execute_rename_impl(
 
     let _guard = state.write_lock.lock().await;
     let kb_root = kb_root_or_err(state).await?;
+    let runtime_dir = runtime_dir_or_err(state).await?;
 
     // R8: 与新建条目同一套校验——新名必须能作为单个文件名组件，
     // 新目录必须是 KB 根下的安全相对子路径。否则 `new_path` / `new_id`
@@ -1661,13 +1709,62 @@ pub async fn execute_rename_impl(
     }
 
     // 4) Cascade: find/replace `[[old_id]]` → `[[new_id]]` in every
-    //    other .md, skipping code blocks. Track files we touch so we
-    //    can report them in the result and roll back on failure.
+    //    other .md, skipping code blocks; 并把解析后指向被移动条目的
+    //    相对 markdown 链接按引用方位置改写成新路径（D1：kaiwu 生命周期
+    //    ——归档 = 移动 + 改名——能在 rm 里存活的前提）。
+    //    Track files we touch so we can report them in the result and
+    //    roll back on failure.
     let mut updated_files: Vec<String> = Vec::new();
     let mut pre_cascade_cache: Vec<(std::path::PathBuf, String)> = Vec::new();
     if cascade && id != new_id {
         let needle = format!("[[{id}]]");
         let replacement = format!("[[{new_id}]]");
+        // 旧路径的解析查找表（move 前 rebuild 的 DB 即旧路径快照）+
+        // 被移动条目的新旧路径派生代号（Q12）。
+        let lookups = {
+            let idx = state.index.read().await;
+            let entries = idx.get_all_entries()?;
+            let as_raw: Vec<crate::entry::RawEntry> = entries
+                .iter()
+                .map(|e| {
+                    let p = std::path::PathBuf::from(&e.path);
+                    crate::entry::read_md_file(&p, &kb_root)
+                })
+                .collect();
+            crate::index::build_link_lookups(&as_raw, &kb_root)
+        };
+        let old_rel = old_path
+            .strip_prefix(&kb_root)
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|_| old_path.clone());
+        let new_rel = new_path
+            .strip_prefix(&kb_root)
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|_| new_path.clone());
+        let old_code = crate::index::doc_code_from_parts(
+            &old_rel
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            &old_rel
+                .file_stem()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        );
+        let new_code = crate::index::doc_code_from_parts(
+            &new_rel
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            &new_rel
+                .file_stem()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default(),
+        );
+        let new_rel_str = new_rel.to_string_lossy().replace('\\', "/");
+
         for file in find_md_files(&kb_root) {
             if file == old_path || (old_is_dir && file.starts_with(&old_path)) {
                 continue;
@@ -1676,10 +1773,56 @@ pub async fn execute_rename_impl(
                 Ok(s) => s,
                 Err(_) => continue,
             };
-            let (new_content, count) = cascade_replace(&content, &needle, &replacement);
-            if count > 0 {
+            let (after_wikilink, count) = cascade_replace(&content, &needle, &replacement);
+
+            // 相对链接级联：解析（含来源目录归一化 + 代号）命中被移动条目
+            // 才重写；引用方自身的 dir 决定新的相对形式。
+            let parsed = crate::entry::read_md_file(&file, &kb_root);
+            let mut after_links = after_wikilink.clone();
+            let mut link_count = 0usize;
+            for link in &parsed.markdown_links {
+                if crate::parser::is_external_url(&link.url) {
+                    continue;
+                }
+                let cleaned = link.url.split('#').next().unwrap_or(&link.url);
+                let cleaned = cleaned.split('?').next().unwrap_or(cleaned);
+                if crate::index::is_attachment_url(cleaned) {
+                    continue;
+                }
+                let resolved =
+                    crate::index::resolve_target(cleaned, parsed.dir.as_deref(), &lookups);
+                if resolved.as_deref() != Some(id.as_str()) {
+                    continue;
+                }
+                // 锚点/查询后缀原样保留
+                let suffix = &link.url[cleaned.len()..];
+                let new_url = if parsed.doc_code.as_deref() == Some(cleaned) {
+                    continue; // frontmatter 文档代号是稳定锚，不随移动变
+                } else if old_code.as_deref() == Some(cleaned) {
+                    match &new_code {
+                        Some(c) => format!("{c}{suffix}"),
+                        None => continue,
+                    }
+                } else {
+                    let rel =
+                        crate::index::relative_path_between(parsed.dir.as_deref(), &new_rel_str);
+                    if rel.is_empty() {
+                        // 相对化后为空（不可能：来源与目标同路径会被 no-op 拦截），
+                        // 跳过该链接的重写。
+                        continue;
+                    }
+                    format!("{rel}{suffix}")
+                };
+                if new_url != link.url {
+                    let occurrences = after_links.matches(&link.url).count();
+                    after_links = after_links.replace(&link.url, &new_url);
+                    link_count += occurrences;
+                }
+            }
+
+            if count > 0 || link_count > 0 {
                 pre_cascade_cache.push((file.clone(), content));
-                if let Err(e) = std::fs::write(&file, &new_content) {
+                if let Err(e) = std::fs::write(&file, &after_links) {
                     // Roll back all already-cascaded files
                     for (path, original) in pre_cascade_cache {
                         let _ = std::fs::write(&path, original);
@@ -1747,7 +1890,7 @@ pub async fn execute_rename_impl(
 
     // 8) 历史目录跟随 id 迁移。与布局一样是迁移的一部分：失败就整体回滚，
     //    不能留下“文档移动了但历史还挂旧 id”的半成品。
-    if let Err(e) = crate::history::migrate_entry_history(&kb_root, &id, &new_id) {
+    if let Err(e) = crate::history::migrate_entry_history(&runtime_dir, &id, &new_id) {
         let rollback_errors = rollback_rename_state(
             state,
             &kb_root,
@@ -1776,10 +1919,10 @@ pub async fn execute_rename_impl(
     // 会在前端被当作新节点重新布局。这里选择整体回滚——把历史目录、DB 行、
     // `@synapse-id`、文件移动和级联引用全部恢复，保证“要么改名+布局一起成功，
     // 要么完全没变”。
-    if let Err(e) = crate::layout_store::rename_key(&kb_root, &id, &new_id) {
+    if let Err(e) = crate::layout_store::rename_key(&runtime_dir, &id, &new_id) {
         let mut rollback_errors: Vec<String> = Vec::new();
         // 历史目录已经迁到 new_id 下，先搬回旧 id。
-        if let Err(re) = crate::history::migrate_entry_history(&kb_root, &new_id, &id) {
+        if let Err(re) = crate::history::migrate_entry_history(&runtime_dir, &new_id, &id) {
             rollback_errors.push(format!("restore history: {re}"));
         }
         rollback_errors.extend(
@@ -1885,11 +2028,23 @@ fn cascade_replace(content: &str, needle: &str, replacement: &str) -> (String, u
 /// Direct regex replace of `<!-- @synapse-id: OLD -->` → `<!-- @synapse-id: NEW -->`
 /// in the file at `path`. No validation; just a targeted string rewrite.
 fn update_synapse_id_in_file(path: &Path, old: &str, new: &str) -> std::io::Result<()> {
-    use regex::Regex;
+    // Q6.a：id 写 frontmatter（唯一真源），不再改正则匹配的注释行。
+    // 旧注释 id 若存在则保留为 stale（只读兼容，解析侧 frontmatter 优先）。
+    // 文件两处都没有 old id（如 id 完全来自路径派生且从未落盘）时保持原样。
     let content = std::fs::read_to_string(path)?;
-    let pattern = format!(r"<!-- @synapse-id:\s*{}\s*-->", regex::escape(old));
-    let re = Regex::new(&pattern).expect("valid regex");
-    let new_content = re.replace(&content, format!("<!-- @synapse-id: {new} -->")).into_owned();
+    let fm_has_old = crate::parser::fm_writer::has_key(&content, "id");
+    let comment_has_old = content.contains(&format!("@synapse-id: {old}"))
+        || content.contains(&format!("@synapse-id:{old}"));
+    if !fm_has_old && !comment_has_old {
+        return Ok(());
+    }
+    let new_content = crate::parser::fm_writer::apply_edits(
+        &content,
+        &crate::parser::fm_writer::FrontmatterEdit::set(
+            "id",
+            crate::parser::fm_writer::FmValue::Str(new.to_string()),
+        ),
+    );
     if new_content != content {
         std::fs::write(path, new_content)?;
     }
@@ -2178,6 +2333,10 @@ mod tests {
             index: Arc::new(tokio::sync::RwLock::new(index)),
             kbs: Arc::new(tokio::sync::RwLock::new(registry)),
             current_kb: Arc::new(tokio::sync::RwLock::new(current_kb)),
+            runtime_dir_base: std::env::temp_dir().join(format!(
+                "synapse-cmd-test-runtime-{}",
+                unique_test_suffix()
+            )),
             validation_report: Arc::new(tokio::sync::RwLock::new(None)),
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
             watcher: Arc::new(std::sync::Mutex::new(None)),
@@ -2471,10 +2630,14 @@ End of note.
         .await
         .expect("update should succeed");
 
-        // File on disk updated — the @synapse-title line must reflect the new value.
+        // Q6.a：title 写进 frontmatter（注释是只读兼容，不再更新、也不清除）。
         let on_disk = std::fs::read_to_string(kb_root.join("note.md")).unwrap();
-        assert!(on_disk.contains("<!-- @synapse-title: New -->"), "disk: {on_disk}");
-        assert!(!on_disk.contains("Old"), "old title must be replaced, not duplicated: {on_disk}");
+        assert!(on_disk.starts_with("---\ntitle: New\n---\n"), "frontmatter first with new title: {on_disk}");
+        assert!(!on_disk.contains("<!-- @synapse-title: New -->"), "no comment write: {on_disk}");
+        assert!(
+            on_disk.contains("<!-- @synapse-title: Old -->"),
+            "stale legacy comment stays (read-only compat): {on_disk}"
+        );
 
         // Returned entry matches the on-disk id (title comes from the
         // first `# heading` in flat-md format, which is still "Note").
@@ -2516,8 +2679,10 @@ End of note.
         assert_eq!(tags, vec!["topic:rust", "type:concept"]);
         assert_eq!(result.labels, vec!["important"]);
         let on_disk = std::fs::read_to_string(kb_root.join("note.md")).unwrap();
-        assert!(on_disk.contains("@synapse-tags: type:concept, topic:rust"));
-        assert!(on_disk.contains("@synapse-labels: important"));
+        // Q6.a：元数据写 frontmatter（唯一真源），不再插 HTML 注释。
+        assert!(on_disk.contains("tags: type:concept, topic:rust"), "{on_disk}");
+        assert!(on_disk.contains("labels: important"), "{on_disk}");
+        assert!(on_disk.starts_with("---\n"), "frontmatter must be first line: {on_disk}");
     }
 
     // ---------- precheck_rename / count_incoming_refs ----------
@@ -2666,9 +2831,9 @@ End of note.
         assert!(hub.contains("[[target-v2]]"), "wikilink not cascaded: {hub}");
         assert!(!hub.contains("[[target]]"), "old wikilink still present: {hub}");
 
-        // target's file moved and @synapse-id updated
+        // target's file moved and id updated in frontmatter (Q6.a)
         let target = std::fs::read_to_string(kb_root.join("target-v2.md")).unwrap();
-        assert!(target.contains("<!-- @synapse-id: target-v2 -->"), "@synapse-id not updated: {target}");
+        assert!(target.starts_with("---\nid: target-v2\n---\n"), "frontmatter id not updated: {target}");
 
         // Old file is gone
         assert!(!kb_root.join("target.md").exists(), "old file must be removed");
@@ -2690,7 +2855,7 @@ End of note.
             let idx = state.index.read().await;
             idx.rebuild(&kb_root).unwrap();
         }
-        crate::layout_store::update_position(&kb_root, "target", 120.0, -45.0).unwrap();
+        crate::layout_store::update_position(&state.runtime_dir_base.join("kb-test"), "target", 120.0, -45.0).unwrap();
 
         let result = execute_rename_impl(
             &state,
@@ -2703,7 +2868,7 @@ End of note.
         .unwrap();
         assert_eq!(result.new_id, "target-v2");
 
-        let positions = crate::layout_store::load_positions(&kb_root);
+        let positions = crate::layout_store::load_positions(&state.runtime_dir_base.join("kb-test"));
         let moved = positions
             .get("target-v2")
             .expect("renamed entry must keep its layout position");
@@ -2738,9 +2903,10 @@ End of note.
             let idx = state.index.read().await;
             idx.rebuild(&kb_root).unwrap();
         }
-        crate::layout_store::update_position(&kb_root, "target", 120.0, -45.0).unwrap();
-        // 让 layout 的原子写失败。
-        std::fs::create_dir(kb_root.join(".synapse-layout.json.tmp")).unwrap();
+        let runtime_dir = state.runtime_dir_base.join("kb-test");
+        crate::layout_store::update_position(&runtime_dir, "target", 120.0, -45.0).unwrap();
+        // 让 layout 的原子写失败（Q10.a 后布局在 runtime 目录）。
+        std::fs::create_dir(runtime_dir.join("layout.json.tmp")).unwrap();
 
         let err = execute_rename_impl(
             &state,
@@ -2770,7 +2936,7 @@ End of note.
             assert!(!entries.iter().any(|e| e.id == "target-v2"));
         }
         // 布局保持旧键与坐标。
-        let positions = crate::layout_store::load_positions(&kb_root);
+        let positions = crate::layout_store::load_positions(&state.runtime_dir_base.join("kb-test"));
         let kept = positions.get("target").expect("old layout key must survive");
         assert_eq!(kept.x, 120.0);
         assert_eq!(kept.y, -45.0);
@@ -2798,7 +2964,7 @@ End of note.
             idx.rebuild(&kb_root).unwrap();
         }
         crate::history::record_version(
-            &kb_root,
+            &state.runtime_dir_base.join("kb-test"),
             "old-target",
             "",
             "# history v1\n",
@@ -2806,7 +2972,7 @@ End of note.
             None,
         )
         .unwrap();
-        assert!(crate::history::list_versions(&kb_root, "old-target").unwrap().len() == 1);
+        assert!(crate::history::list_versions(&state.runtime_dir_base.join("kb-test"), "old-target").unwrap().len() == 1);
 
         let result = execute_rename_impl(
             &state,
@@ -2820,10 +2986,10 @@ End of note.
         assert_eq!(result.new_id, "new-target");
         assert!(kb_root.join("new/target.md").exists());
 
-        let versions = crate::history::list_versions(&kb_root, "new-target").unwrap();
+        let versions = crate::history::list_versions(&state.runtime_dir_base.join("kb-test"), "new-target").unwrap();
         assert_eq!(versions.len(), 1, "history must follow the new id");
         assert!(
-            crate::history::list_versions(&kb_root, "old-target").unwrap().is_empty(),
+            crate::history::list_versions(&state.runtime_dir_base.join("kb-test"), "old-target").unwrap().is_empty(),
             "old history directory must be gone"
         );
     }
@@ -2849,9 +3015,9 @@ End of note.
             let idx = state.index.read().await;
             idx.rebuild(&kb_root).unwrap();
         }
-        crate::layout_store::update_position(&kb_root, "old-target", 10.0, 20.0).unwrap();
+        crate::layout_store::update_position(&state.runtime_dir_base.join("kb-test"), "old-target", 10.0, 20.0).unwrap();
         crate::history::record_version(
-            &kb_root,
+            &state.runtime_dir_base.join("kb-test"),
             "old-target",
             "",
             "# history v1\n",
@@ -2860,7 +3026,7 @@ End of note.
         )
         .unwrap();
         // 目标 id 已有历史目录 → migrate_entry_history 拒绝迁移。
-        std::fs::create_dir_all(crate::history::history_dir(&kb_root, "new-target")).unwrap();
+        std::fs::create_dir_all(crate::history::history_dir(&state.runtime_dir_base.join("kb-test"), "new-target")).unwrap();
 
         let err = execute_rename_impl(
             &state,
@@ -2880,7 +3046,7 @@ End of note.
         assert!(content.contains("<!-- @synapse-id: old-target -->"));
         let hub = std::fs::read_to_string(kb_root.join("hub.md")).unwrap();
         assert!(hub.contains("[[old-target]]"), "cascade must be rolled back: {hub}");
-        let positions = crate::layout_store::load_positions(&kb_root);
+        let positions = crate::layout_store::load_positions(&state.runtime_dir_base.join("kb-test"));
         assert!(positions.contains_key("old-target"));
         assert!(!positions.contains_key("new-target"));
         {
@@ -2891,7 +3057,7 @@ End of note.
         }
         // 旧历史仍在，且回滚后来没有把它的目录搬走。
         assert_eq!(
-            crate::history::list_versions(&kb_root, "old-target").unwrap().len(),
+            crate::history::list_versions(&state.runtime_dir_base.join("kb-test"), "old-target").unwrap().len(),
             1
         );
         assert!(!state.all_paths_locally_written(&[kb_root.join("new/target.md")]));
@@ -3229,13 +3395,13 @@ End of note.
                 .await
                 .unwrap();
         }
-        let versions = crate::history::list_versions(&kb_root, "note").unwrap();
+        let versions = crate::history::list_versions(&state.runtime_dir_base.join("kb-test"), "note").unwrap();
         assert_eq!(versions.len(), 3, "初始内容 + 两次保存 = 3 版");
         let first_id = versions[0].version_id.clone();
 
         let restored = {
             let _guard = state.write_lock.lock().await;
-            let content = crate::history::read_version_content(&kb_root, "note", &first_id)
+            let content = crate::history::read_version_content(&state.runtime_dir_base.join("kb-test"), "note", &first_id)
                 .unwrap()
                 .expect("小文件版本必须可回退");
             write_entry_content(
@@ -3251,7 +3417,7 @@ End of note.
         assert!(restored.changed);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "v1\n");
 
-        let after = crate::history::list_versions(&kb_root, "note").unwrap();
+        let after = crate::history::list_versions(&state.runtime_dir_base.join("kb-test"), "note").unwrap();
         assert_eq!(after.len(), 4, "回退本身也要产生一条新版本");
         let newest = after.last().unwrap();
         assert_eq!(newest.origin, crate::history::SaveOrigin::Restore);
@@ -3329,9 +3495,9 @@ End of note.
         std::fs::create_dir_all(kb_root.join("alpha")).unwrap();
         std::fs::create_dir_all(kb_root.join("beta")).unwrap();
         std::fs::write(kb_root.join("alpha").join("note.md"), "# Note\n").unwrap();
-        crate::layout_store::update_position(&kb_root, "alpha-note", 10.0, 20.0).unwrap();
 
         let state = state_with_current_kb(Some(&kb_root));
+        crate::layout_store::update_position(&state.runtime_dir_base.join("kb-test"), "alpha-note", 10.0, 20.0).unwrap();
         {
             let idx = state.index.read().await;
             idx.rebuild(&kb_root).unwrap();
@@ -3345,7 +3511,7 @@ End of note.
         assert!(kb_root.join("beta").join("note.md").exists());
         assert!(!kb_root.join("alpha").join("note.md").exists());
 
-        let positions = crate::layout_store::load_positions(&kb_root);
+        let positions = crate::layout_store::load_positions(&state.runtime_dir_base.join("kb-test"));
         assert!(positions.get("alpha-note").is_none(), "旧布局键必须消失");
         assert_eq!(
             positions.get("beta-note").map(|p| (p.x, p.y)),

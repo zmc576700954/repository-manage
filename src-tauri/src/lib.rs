@@ -212,6 +212,7 @@ pub fn run() {
         index: index_arc.clone(),
         kbs: kbs_arc.clone(),
         current_kb: current_kb_arc.clone(),
+        runtime_dir_base: crate::paths::indexes_dir(),
         validation_report: Arc::new(RwLock::new(None)),
         write_lock: Arc::new(Mutex::new(())),
         watcher: Arc::new(std::sync::Mutex::new(initial_watcher)),
@@ -265,6 +266,7 @@ pub fn run() {
             commands::get_active_kb,
             commands::rebuild_active_kb,
             commands::active_kb_entry_count,
+            commands::read_kb_readme,
             commands::get_layout,
             commands::save_node_position,
             commands::get_entry_content,
@@ -491,8 +493,15 @@ fn run_watch_loop(rx: std::sync::mpsc::Receiver<Vec<std::path::PathBuf>>, state:
                                 let Ok(text) = std::fs::read_to_string(content_path) else {
                                     continue;
                                 };
+                                // Q10.a：外部变更的版本痕写运行时目录。
+                                let history_root = {
+                                    let cur = state.current_kb.blocking_read();
+                                    cur.as_ref()
+                                        .map(|kb| state.runtime_dir_base.join(&kb.id))
+                                };
+                                let history_root = history_root.unwrap_or_else(|| kb_path.clone());
                                 if let Err(e) = crate::history::record_external_change(
-                                    &kb_path, &entry.id, &text,
+                                    &history_root, &entry.id, &text,
                                 ) {
                                     eprintln!(
                                         "[history] record external change for {} failed: {e}",
@@ -566,6 +575,22 @@ async fn run_startup_rebuild(state: &AppState) {
     }
 
     let _guard = state.write_lock.lock().await;
+
+    // Q10.a：先把 KB 目录里的旧运行时产物（.synapse-layout.json /
+    // .synapse/history/）搬到 app data，再重建索引——KB 目录从此纯文档。
+    let runtime_dir = {
+        let cur = state.current_kb.read().await;
+        cur.as_ref()
+            .map(|kb| state.runtime_dir_base.join(&kb.id))
+    };
+    if let Some(runtime_dir) = runtime_dir {
+        if let Err(e) =
+            crate::state::migrate_legacy_runtime_state(&kb_path, &runtime_dir)
+        {
+            eprintln!("[startup] legacy runtime state migration failed: {e}");
+        }
+    }
+
     let idx = state.index.read().await;
     if let Err(e) = idx.rebuild(&kb_path) {
         eprintln!("[startup] rebuild failed: {e}");
@@ -702,6 +727,10 @@ mod tests {
                 name: "test".to_string(),
                 path: kb_path.to_string_lossy().to_string(),
             }))),
+            runtime_dir_base: std::env::temp_dir().join(format!(
+                "synapse-kb-test-runtime-{}",
+                unique_test_suffix()
+            )),
             validation_report: Arc::new(tokio::sync::RwLock::new(None)),
             write_lock: Arc::new(tokio::sync::Mutex::new(())),
             watcher: Arc::new(std::sync::Mutex::new(None)),
@@ -821,6 +850,7 @@ mod tests {
             error_count: 0,
             warning_count: 0,
             extra_meta: vec![],
+            doc_code: None,
         }
     }
 

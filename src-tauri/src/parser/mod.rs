@@ -1,4 +1,5 @@
 pub mod comments;
+pub mod fm_writer;
 pub mod links;
 pub mod attachments;
 pub mod yaml_field;

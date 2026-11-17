@@ -45,6 +45,8 @@ pub struct RawEntry {
     /// `tags` 键）。KB 级任一条目为 true 即视为声明；E4（`type:` 前缀要求）
     /// 只对声明了体系的 KB 生效，kaiwu 式 frontmatter KB 不再被打成 35 个 error。
     pub declares_tags_system: bool,
+    /// `文档代号`（NN-MM，Q12.a）：仅认 frontmatter；解析目标时的最优先键。
+    pub doc_code: Option<String>,
     pub validation: Vec<crate::validator::ValidationIssue>,
 }
 
@@ -58,6 +60,8 @@ pub struct RawAttachment {
 /// 正文解析结果：扁平 `.md` 与目录 `content.md` 共用这一套逻辑。
 struct ParsedBody {
     metadata: std::collections::HashMap<String, String>,
+    /// frontmatter 键的字符串化视图（Q2.a：frontmatter 优先，注释回退）。
+    fm: std::collections::HashMap<String, String>,
     first_heading: Option<String>,
     tags: Vec<String>,
     attachments: Vec<RawAttachment>,
@@ -76,6 +80,44 @@ struct ParsedBody {
     declares_tags_system: bool,
 }
 
+/// frontmatter 值 → 元数据字符串（列表转 csv，与 @synapse-tags 语义对齐）。
+fn fm_scalar_string(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        serde_json::Value::Array(items) => {
+            let parts: Vec<String> = items.iter().filter_map(fm_scalar_string).collect();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(", "))
+            }
+        }
+        _ => None,
+    }
+}
+
+impl ParsedBody {
+    /// 取元数据键：frontmatter 优先，`@synapse-*` 注释只读兼容回退。
+    fn effective(&self, key: &str) -> Option<String> {
+        self.fm
+            .get(key)
+            .cloned()
+            .or_else(|| self.metadata.get(key).cloned())
+    }
+
+    /// `文档代号`（NN-MM，Q12）：稳定引用键，仅认 frontmatter。
+    fn doc_code(&self) -> Option<String> {
+        self.fm
+            .get("文档代号")
+            .cloned()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+}
+
 fn parse_body(content: &str) -> ParsedBody {
     let metadata = parse_metadata_comments(content);
     let first_heading = content
@@ -84,10 +126,6 @@ fn parse_body(content: &str) -> ParsedBody {
         .map(|l| l.trim_start_matches('#').trim().to_string())
         .filter(|s| !s.is_empty());
 
-    let tags = metadata
-        .get("tags")
-        .map(|s| extract_labels(s))
-        .unwrap_or_default();
     let attachments: Vec<RawAttachment> = extract_attachments(content)
         .into_iter()
         .map(|(path, caption)| RawAttachment {
@@ -107,9 +145,31 @@ fn parse_body(content: &str) -> ParsedBody {
         .and_then(|yaml| parse_yaml_fields_with_extras(&yaml).ok())
         .map_or((None, Vec::new()), |(fields, extra)| (Some(fields), extra));
 
+    // frontmatter 字符串视图：后续取值一律 effective()（frontmatter 优先）。
+    // 中文键别名（kaiwu 方言，D3/Q12）：状态→status、标题→title、标签→tags，
+    // 别名不覆盖同名的原生键。
+    let fm: std::collections::HashMap<String, String> = extra_meta
+        .iter()
+        .filter_map(|m| fm_scalar_string(&m.value).map(|s| (m.key.clone(), s)))
+        .collect();
+    let fm = {
+        let mut aliased = fm.clone();
+        for (cn, en) in [("状态", "status"), ("标题", "title"), ("标签", "tags")] {
+            if let Some(v) = fm.get(cn) {
+                aliased.entry(en.to_string()).or_insert_with(|| v.clone());
+            }
+        }
+        aliased
+    };
+
     // tags 体系声明：`@synapse-tags` 注释或 frontmatter `tags` 键，任一即算。
     let declares_tags_system =
         metadata.contains_key("tags") || extra_meta.iter().any(|m| m.key == "tags");
+
+    let tags = parse_body_effective(&metadata, &fm, "tags")
+        .map(|s| extract_labels(&s))
+        .unwrap_or_default();
+
 
     let typed_relations = extract_relations(content)
         .into_iter()
@@ -126,21 +186,18 @@ fn parse_body(content: &str) -> ParsedBody {
     ParsedBody {
         first_heading,
         tags,
-        labels: metadata
-            .get("labels")
-            .map(|s| extract_labels(s))
+        labels: parse_body_effective(&metadata, &fm, "labels")
+            .map(|s| extract_labels(&s))
             .unwrap_or_default(),
-        status: metadata.get("status").cloned(),
-        aliases: metadata
-            .get("aliases")
-            .map(|s| extract_labels(s))
+        status: parse_body_effective(&metadata, &fm, "status"),
+        aliases: parse_body_effective(&metadata, &fm, "aliases")
+            .map(|s| extract_labels(&s))
             .unwrap_or_default(),
-        source: metadata.get("source").cloned(),
-        created: metadata.get("created").cloned(),
-        updated: metadata.get("updated").cloned(),
-        ignored_rules: metadata
-            .get("ignore")
-            .map(|s| extract_labels(s))
+        source: parse_body_effective(&metadata, &fm, "source"),
+        created: parse_body_effective(&metadata, &fm, "created"),
+        updated: parse_body_effective(&metadata, &fm, "updated"),
+        ignored_rules: parse_body_effective(&metadata, &fm, "ignore")
+            .map(|s| extract_labels(&s))
             .unwrap_or_default(),
         attachments,
         linked_targets: extract_double_bracket_links(content),
@@ -150,7 +207,17 @@ fn parse_body(content: &str) -> ParsedBody {
         extra_meta,
         declares_tags_system,
         metadata,
+        fm,
     }
+}
+
+/// parse_body 内部使用的键查找（frontmatter 优先，注释回退）。
+fn parse_body_effective(
+    metadata: &std::collections::HashMap<String, String>,
+    fm: &std::collections::HashMap<String, String>,
+    key: &str,
+) -> Option<String> {
+    fm.get(key).cloned().or_else(|| metadata.get(key).cloned())
 }
 
 /// 扁平格式的 id 派生：相对路径去扩展名、去掉开头的保留前缀目录，再用 `-` 连接。
@@ -209,21 +276,20 @@ pub fn read_md_file(file: &Path, kb_root: &Path) -> RawEntry {
     let body = parse_body(&content);
 
     let id = body
-        .metadata
-        .get("id")
+        .effective("id")
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| flat_id_from_rel(rel));
 
     let title = body
-        .metadata
-        .get("title")
+        .effective("title")
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .or(body.first_heading.clone())
         .filter(|s| !s.is_empty())
         .unwrap_or(file_stem);
 
+    let doc_code = body.doc_code();
     RawEntry {
         id,
         title,
@@ -247,6 +313,7 @@ pub fn read_md_file(file: &Path, kb_root: &Path) -> RawEntry {
         ignored_rules: body.ignored_rules,
         extra_meta: body.extra_meta,
         declares_tags_system: body.declares_tags_system,
+        doc_code: doc_code,
         validation: vec![],
     }
 }
@@ -286,6 +353,7 @@ pub fn read_entry(entry_dir: &Path) -> RawEntry {
             ignored_rules: vec![],
             extra_meta: vec![],
             declares_tags_system: false,
+            doc_code: None,
             validation: vec![],
         };
     }
@@ -294,23 +362,21 @@ pub fn read_entry(entry_dir: &Path) -> RawEntry {
     let body = parse_body(&content);
 
     let id = body
-        .metadata
-        .get("id")
+        .effective("id")
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| dir_id.clone());
     let title = body
-        .metadata
-        .get("title")
+        .effective("title")
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| id.clone());
     let group = body
-        .metadata
-        .get("group")
+        .effective("group")
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
 
+    let doc_code = body.doc_code();
     RawEntry {
         id,
         title,
@@ -336,6 +402,7 @@ pub fn read_entry(entry_dir: &Path) -> RawEntry {
         ignored_rules: body.ignored_rules,
         extra_meta: body.extra_meta,
         declares_tags_system: body.declares_tags_system,
+        doc_code: doc_code,
         validation: vec![],
     }
 }

@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS entries (
     ignored_rules TEXT,
     error_count INTEGER NOT NULL DEFAULT 0,
     warning_count INTEGER NOT NULL DEFAULT 0,
-    extra_meta TEXT
+    extra_meta TEXT,
+    doc_code TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tags (
@@ -114,6 +115,9 @@ pub struct StoredEntry {
     /// frontmatter 里 rm 未建模的键（保序），如 kaiwu 四键。JSON 落库，
     /// camelCase 序列化后透出给前端展示。
     pub extra_meta: Vec<ExtraMetaEntry>,
+    /// `文档代号`（NN-MM，Q12）：稳定引用键，解析最优先键；增量和 rebuild
+    /// 都从 DB 列构建代号索引，两条路径同口径。
+    pub doc_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,6 +177,7 @@ impl Index {
             "ALTER TABLE entries ADD COLUMN error_count INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE entries ADD COLUMN warning_count INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE entries ADD COLUMN extra_meta TEXT",
+            "ALTER TABLE entries ADD COLUMN doc_code TEXT",
         ];
         for sql in add_columns {
             // 重复 ALTER 同一列会失败；用 `duplicate column name` 作为「已存在」的信号。
@@ -226,8 +231,8 @@ impl Index {
         conn.execute(
             "INSERT INTO entries (id, title, path, content_path, group_name, dir, has_content_md, \
              labels, status, aliases, source, created, updated, ignored_rules, \
-             error_count, warning_count, extra_meta) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             error_count, warning_count, extra_meta, doc_code) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(id) DO UPDATE SET \
              title = excluded.title, path = excluded.path, content_path = excluded.content_path, \
              group_name = excluded.group_name, dir = excluded.dir, \
@@ -235,7 +240,8 @@ impl Index {
              labels = excluded.labels, status = excluded.status, aliases = excluded.aliases, \
              source = excluded.source, created = excluded.created, updated = excluded.updated, \
              ignored_rules = excluded.ignored_rules, error_count = excluded.error_count, \
-             warning_count = excluded.warning_count, extra_meta = excluded.extra_meta",
+             warning_count = excluded.warning_count, extra_meta = excluded.extra_meta, \
+             doc_code = excluded.doc_code",
             params![
                 entry.id,
                 entry.title,
@@ -254,6 +260,7 @@ impl Index {
                 error_count,
                 warning_count,
                 extra_meta_json,
+                entry.doc_code,
             ],
         )?;
 
@@ -310,7 +317,7 @@ impl Index {
         let mut stmt = conn.prepare(
             "SELECT id, title, path, content_path, group_name, dir, has_content_md, \
                     labels, status, aliases, source, created, updated, ignored_rules, \
-                    error_count, warning_count, extra_meta \
+                    error_count, warning_count, extra_meta, doc_code \
              FROM entries ORDER BY id",
         )?;
 
@@ -319,6 +326,7 @@ impl Index {
             let aliases_json: Option<String> = row.get(9)?;
             let ignored_json: Option<String> = row.get(13)?;
             let extra_meta_json: Option<String> = row.get(16)?;
+            let doc_code: Option<String> = row.get(17)?;
             Ok(StoredEntry {
                 id: row.get(0)?,
                 title: row.get(1)?,
@@ -345,6 +353,7 @@ impl Index {
                     .as_deref()
                     .and_then(|s| serde_json::from_str(s).ok())
                     .unwrap_or_default(),
+                doc_code,
             })
         })?;
 
@@ -502,22 +511,27 @@ impl Index {
         }
 
         // Build lookup tables from current DB state.
-        let (id_set, by_stem, by_rel_path) = {
+        let lookups = {
             let conn = self.conn.lock().unwrap();
-            let mut stmt = conn.prepare("SELECT id, path, content_path FROM entries")?;
+            let mut stmt = conn.prepare("SELECT id, path, content_path, doc_code FROM entries")?;
             let rows = stmt.query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
                 ))
             })?;
             let mut id_set: HashSet<String> = HashSet::new();
             let mut by_stem: HashMap<String, String> = HashMap::new();
             let mut by_rel_path: HashMap<String, String> = HashMap::new();
+            let mut by_doc_code: HashMap<String, String> = HashMap::new();
             for row in rows {
-                let (id, p, content_path) = row?;
+                let (id, p, content_path, doc_code) = row?;
                 id_set.insert(id.clone());
+                if let Some(code) = doc_code {
+                    by_doc_code.entry(code).or_insert_with(|| id.clone());
+                }
                 let pp = std::path::Path::new(&p);
                 if let Some(stem) = pp.file_stem() {
                     by_stem
@@ -538,16 +552,20 @@ impl Index {
                     }
                 }
             }
-            (id_set, by_stem, by_rel_path)
+            LinkLookups {
+                id_set,
+                by_stem,
+                by_rel_path,
+                by_doc_code,
+            }
         };
 
         // 先插入显式关系，再补普通链接；同一 (from, to) 已有显式类型时跳过 reference，
         // 否则 create_entry_simple 的增量路径会与 rebuild 的结果不一致。
+        let source_dir = entry.dir.as_deref();
         let mut typed_targets: HashSet<String> = HashSet::new();
         for rel in &entry.typed_relations {
-            if let Some(target_id) =
-                resolve_target(&rel.target, &id_set, &by_stem, &by_rel_path)
-            {
+            if let Some(target_id) = resolve_target(&rel.target, source_dir, &lookups) {
                 if target_id != entry.id {
                     typed_targets.insert(target_id.clone());
                     self.add_relation(&entry.id, &target_id, &rel.relation_type, None)?;
@@ -557,9 +575,7 @@ impl Index {
 
         // [[xxx]] 双链
         for target in &entry.linked_targets {
-            if let Some(target_id) =
-                resolve_target(target, &id_set, &by_stem, &by_rel_path)
-            {
+            if let Some(target_id) = resolve_target(target, source_dir, &lookups) {
                 if target_id != entry.id && !typed_targets.contains(&target_id) {
                     self.add_relation(&entry.id, &target_id, "reference", None)?;
                 }
@@ -575,9 +591,7 @@ impl Index {
             if is_attachment_url(cleaned) {
                 continue;
             }
-            if let Some(target_id) =
-                resolve_target(cleaned, &id_set, &by_stem, &by_rel_path)
-            {
+            if let Some(target_id) = resolve_target(cleaned, source_dir, &lookups) {
                 if target_id != entry.id && !typed_targets.contains(&target_id) {
                     self.add_relation(&entry.id, &target_id, "reference", None)?;
                 }
@@ -698,12 +712,9 @@ impl Index {
         let mut typed_pairs: HashSet<(String, String)> = HashSet::new();
         for entry in &entries {
             for rel in &entry.typed_relations {
-                if let Some(target_id) = resolve_target(
-                    &rel.target,
-                    &lookups.id_set,
-                    &lookups.by_stem,
-                    &lookups.by_rel_path,
-                ) {
+                if let Some(target_id) =
+                    resolve_target(&rel.target, entry.dir.as_deref(), &lookups)
+                {
                     if target_id != entry.id {
                         typed_pairs.insert((entry.id.clone(), target_id.clone()));
                         typed_relations.push((
@@ -720,12 +731,9 @@ impl Index {
         for entry in &entries {
             // [[xxx]] 双链
             for target in &entry.linked_targets {
-                if let Some(target_id) = resolve_target(
-                    target,
-                    &lookups.id_set,
-                    &lookups.by_stem,
-                    &lookups.by_rel_path,
-                ) {
+                if let Some(target_id) =
+                    resolve_target(target, entry.dir.as_deref(), &lookups)
+                {
                     let pair = (entry.id.clone(), target_id);
                     if pair.1 != entry.id && !typed_pairs.contains(&pair) {
                         references.push(pair);
@@ -743,12 +751,8 @@ impl Index {
                     // 图片/PDF/视频等是附件，不是 entry 关系目标
                     continue;
                 }
-                if let Some(target_id) = resolve_target(
-                    cleaned,
-                    &lookups.id_set,
-                    &lookups.by_stem,
-                    &lookups.by_rel_path,
-                )
+                if let Some(target_id) =
+                    resolve_target(cleaned, entry.dir.as_deref(), &lookups)
                 {
                     let pair = (entry.id.clone(), target_id);
                     if pair.1 != entry.id && !typed_pairs.contains(&pair) {
@@ -796,6 +800,78 @@ pub(crate) struct LinkLookups {
     pub id_set: std::collections::HashSet<String>,
     pub by_stem: HashMap<String, String>,
     pub by_rel_path: HashMap<String, String>,
+    /// 文档代号 -> id（Q12/D2）：frontmatter `文档代号` 优先，路径机械派生
+    /// （目录序号-文件序号 NN-MM）兜底。resolve_target 的最优先解析键。
+    pub by_doc_code: HashMap<String, String>,
+}
+
+/// kaiwu NN-MM 代号的路径机械派生：`dir` 第一段与文件 stem 的开头数字。
+/// F7：35/35 可机械派生；任一侧无数字前缀 → None（不硬造代号）。
+fn derive_doc_code(e: &RawEntry) -> Option<String> {
+    let dir_seg = e.dir.as_deref()?.split('/').next()?;
+    let stem = e.path.file_stem()?.to_string_lossy().to_string();
+    doc_code_from_parts(dir_seg, &stem)
+}
+
+/// 由目录段与文件 stem 派生 NN-MM 代号（rebuild 与 rename 级联共用）。
+pub(crate) fn doc_code_from_parts(dir_seg: &str, stem: &str) -> Option<String> {
+    let dir_num: String = dir_seg.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if dir_num.is_empty() {
+        return None;
+    }
+    let file_num: String = stem.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if file_num.is_empty() {
+        return None;
+    }
+    Some(format!("{dir_num}-{file_num}"))
+}
+
+/// 计算从 `from_dir`（KB 根相对目录，可为空 = 根）到 `to_rel`（KB 根相对
+/// 路径）的相对链接形式。D1 级联重写用：引用方位置不变、目标变了。
+pub(crate) fn relative_path_between(from_dir: Option<&str>, to_rel: &str) -> String {
+    let from_parts: Vec<&str> = from_dir
+        .unwrap_or("")
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    let to_parts: Vec<&str> = to_rel.split('/').filter(|s| !s.is_empty()).collect();
+    let mut i = 0;
+    while i < from_parts.len() && i < to_parts.len() && from_parts[i] == to_parts[i] {
+        i += 1;
+    }
+    let mut out: Vec<String> = Vec::new();
+    for _ in i..from_parts.len() {
+        out.push("..".to_string());
+    }
+    out.extend(to_parts[i..].iter().map(|s| s.to_string()));
+    out.join("/")
+}
+
+/// 按来源文档的 `dir` 把相对链接归一化成 KB 根相对路径（Q17 根因修复）。
+/// `../06-x/03-y.md` from `dir=02-硬件` → `06-x/03-y.md`；越出 KB 根 → None。
+pub(crate) fn normalize_source_relative(source_dir: Option<&str>, target: &str) -> Option<String> {
+    let mut parts: Vec<String> = source_dir
+        .unwrap_or("")
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+    for seg in target.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                if parts.pop().is_none() {
+                    return None;
+                }
+            }
+            s => parts.push(s.to_string()),
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("/"))
+    }
 }
 
 /// 从一批 RawEntry 构建查找表。只认 KB 根相对路径与文件 stem——
@@ -806,9 +882,20 @@ pub(crate) fn build_link_lookups(entries: &[RawEntry], kb_root: &Path) -> LinkLo
         id_set: HashSet::with_capacity(entries.len()),
         by_stem: HashMap::with_capacity(entries.len()),
         by_rel_path: HashMap::with_capacity(entries.len()),
+        by_doc_code: HashMap::with_capacity(entries.len()),
     };
     for e in entries {
         lookups.id_set.insert(e.id.clone());
+        let code = e
+            .doc_code
+            .clone()
+            .or_else(|| derive_doc_code(e));
+        if let Some(code) = code {
+            lookups
+                .by_doc_code
+                .entry(code)
+                .or_insert_with(|| e.id.clone());
+        }
         let stem = e
             .path
             .file_stem()
@@ -838,15 +925,34 @@ pub(crate) fn build_link_lookups(entries: &[RawEntry], kb_root: &Path) -> LinkLo
 }
 
 /// 把各种形式的链接 target（双链 / 相对路径 / file stem）解析到 entry.id。
+///
+/// 解析顺序（Q12/Q17）：
+/// 0) 文档代号（`02-01`，frontmatter `文档代号` ∪ 路径派生）——不随移动改变的锚；
+/// 1) 完整 id；
+/// 2) 根相对路径（含去 `.md` 变体）；
+/// 3) **来源文档 dir 归一化**后的根相对路径（`../06-x/03-y.md` 这类相对链接
+///    的根因修复，不再依赖 stem 兜底）；
+/// 4) file stem 兜底；
+/// 5) id 末尾段匹配。
 pub(crate) fn resolve_target(
     target: &str,
-    id_set: &std::collections::HashSet<String>,
-    by_stem: &std::collections::HashMap<String, String>,
-    by_rel_path: &std::collections::HashMap<String, String>,
+    source_dir: Option<&str>,
+    lookups: &LinkLookups,
 ) -> Option<String> {
     let t = target.trim().trim_start_matches("./");
     if t.is_empty() {
         return None;
+    }
+    let LinkLookups {
+        id_set,
+        by_stem,
+        by_rel_path,
+        by_doc_code,
+    } = lookups;
+    // 0) 文档代号
+    let t_no_ext = t.trim_end_matches(".md");
+    if let Some(id) = by_doc_code.get(t_no_ext) {
+        return Some(id.clone());
     }
     // 1) 完整 id 匹配
     if id_set.contains(t) {
@@ -856,11 +962,22 @@ pub(crate) fn resolve_target(
     if let Some(id) = by_rel_path.get(t) {
         return Some(id.clone());
     }
-    let without_ext = t.trim_end_matches(".md");
-    if let Some(id) = by_rel_path.get(without_ext) {
+    if let Some(id) = by_rel_path.get(t_no_ext) {
         return Some(id.clone());
     }
-    // 3) file stem 匹配（"gdpr-and-data-protection"）
+    // 3) 来源目录归一化后的根相对路径（kaiwu 相对链接主路径）
+    if source_dir.is_some() {
+        if let Some(norm) = normalize_source_relative(source_dir, t) {
+            if let Some(id) = by_rel_path.get(&norm) {
+                return Some(id.clone());
+            }
+            let norm_no_ext = norm.trim_end_matches(".md");
+            if let Some(id) = by_rel_path.get(norm_no_ext) {
+                return Some(id.clone());
+            }
+        }
+    }
+    // 4) file stem 匹配（"gdpr-and-data-protection"）
     let stem = std::path::Path::new(t)
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
@@ -868,7 +985,7 @@ pub(crate) fn resolve_target(
     if let Some(id) = by_stem.get(&stem) {
         return Some(id.clone());
     }
-    // 4) id 末尾匹配（target 是 entry.id 的最后一段，如 "gdpr-and-data-protection"
+    // 5) id 末尾匹配（target 是 entry.id 的最后一段，如 "gdpr-and-data-protection"
     //    对应 entry id "compliance-gdpr-and-data-protection"）
     for id in id_set {
         if id.ends_with(&format!("-{stem}")) {
@@ -938,6 +1055,7 @@ mod tests {
             ignored_rules: vec![],
             extra_meta: vec![],
             declares_tags_system: false,
+            doc_code: None,
             validation: vec![],
         }
     }
