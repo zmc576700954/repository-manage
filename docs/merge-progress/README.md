@@ -159,9 +159,11 @@ bge-reranker 模型缓存（环境遗留，降级闸已验证）。详见 [batch
 
 ### 挂起事项（随批处理，不阻塞）
 
-- kaiwu 全链路回归 PASS 待模型目录恢复（批次 0.5 遗留，环境问题）。
-- dev-kb `search` 功能路径待 bge-reranker 模型缓存（批次 5 遗留，环境问题；
-  降级闸已验证，补齐缓存后自动恢复）。
+- ~~kaiwu 全链路回归 PASS 待模型目录恢复~~ 已终止（2026-11-17 实验区归档删除，
+  门禁随归档退役；口径由 fixture 比对 + synapse validate 承接）。
+- dev-kb `search` 功能路径待 bge-reranker/embedding 模型缓存（批次 5 遗留，
+  环境问题；降级闸已验证）。另：kaiwu 项目索引待重建（projects.yaml 已改指
+  `~/Documents/kaiwu-kb`，tuning 意图映射已重写，契约校验 pass）。
 - 批次 1 的 GUI 验收（编辑 + 归档演练 + check_kb 0/0）待用户在 tauri:dev 执行。
 - 批次 4 的 GUI 人审步骤（提案面板看 diff → 批准/驳回）待用户在 tauri:dev 执行
   （[batch-4.md](batch-4.md) §GUI 人审步骤）。
@@ -184,9 +186,12 @@ bge-reranker 模型缓存（环境遗留，降级闸已验证）。详见 [batch
 
 ## §4 环境事实（跨会话有用）
 
-- 仓库路径：rm `/Users/zhumingchen/repository-manage`、kaiwu `/Users/zhumingchen/kaiwu`
-  （**无 git 远端**，纯本地）、dev-kb `/Users/zhumingchen/dev-kb`（远端
-  `zmc576700954/dev-kb`；rm 远端 `zmc576700954/repository-manage`）。
+- 仓库路径：rm `/Users/zhumingchen/repository-manage`（远端
+  `zmc576700954/repository-manage`）、dev-kb `/Users/zhumingchen/dev-kb`
+  （远端 `zmc576700954/dev-kb`）。
+  **kaiwu 仓库已于 2026-11-17 归档删除**（全量备份
+  `~/Archive/kaiwu-full-20261117.tar.gz` 1.5G，含 LoRA adapters/训练集/门禁脚本）；
+  知识库本体迁至 **`~/Documents/kaiwu-kb`**（rm 是唯一管理入口，GUI ⚙ 添加该路径即可）。
 - rm CLI：`cd src-tauri && cargo build --bin synapse` →
   `./target/debug/synapse validate <kb> [--json]`；`SYNAPSE_TODAY` 可钉日期。
 - rm MCP server：`cd src-tauri && cargo build --bin synapse-mcp` →
@@ -194,10 +199,10 @@ bge-reranker 模型缓存（环境遗留，降级闸已验证）。详见 [batch
   与 dev-kb 同协议；注册表只读，`--kb` 未注册时派生 `agent-<hash>` 稳定 id）。
 - fixture 比对：`cd ~/dev-kb && python3 fixtures/kb-spec/compare.py
   --rm-repo ~/repository-manage`（frozen 模式 = CI 同款）；实时比对加
-  `--kaiwu-repo ~/kaiwu`；更新基线必须 `--update-baseline --reason "..."`。
-- kaiwu 门禁：`scripts/run_regression.sh`（第 3 步已走 synapse CLI，
-  `SYNAPSE_BIN` 默认指向 rm 的 target/debug/synapse）。
-- kaiwu 文档格式：YAML frontmatter 四键（优先级/状态/最后更新/下次 review），
+  `--kaiwu-repo <已删>`（kaiwu 仓库归档后实时比对不可用；frozen 模式为唯一口径）；更新基线必须 `--update-baseline --reason "..."`。
+- kaiwu 门禁已随实验区归档退役（`run_regression.sh` 在归档内）；`kb_errors: 0`
+  口径由 dev-kb 的 fixture 双实现比对与 `synapse validate` 承接。
+- kaiwu 文档格式（KB 现：`~/Documents/kaiwu-kb`）：YAML frontmatter 四键（优先级/状态/最后更新/下次 review），
   无 `@synapse-*` 注释、无 tags；NN-MM 代号可从路径机械派生。
 - `_` 前缀路径段 = 机制目录（`_proposals/` 首例）：双侧校验器豁免、
   仍索引展示（批次 3 定稿，规范「豁免」节有契约）。
@@ -209,7 +214,7 @@ bge-reranker 模型缓存（环境遗留，降级闸已验证）。详见 [batch
    「已知边界与遗留」与「续接点」（计划外方向清单）。
 2. **验证现场**：rm/kaiwu/dev-kb 三仓 `git log -1` 应为 §2 表末行提交；
    `cargo test` 312 绿；
-   `SYNAPSE_TODAY=2026-11-17 ./target/debug/synapse validate ~/kaiwu/kb/kaiwu --json`
+   `SYNAPSE_TODAY=2026-11-17 ./target/debug/synapse validate ~/Documents/kaiwu-kb --json`
    应 0/0/0；dev-kb `compare.py` frozen 模式应 PASS；
    `synapse-mcp --help` 可运行；`python3 agents/mdsearch.py --status`
    可见六项目登记。
