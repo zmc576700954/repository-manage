@@ -165,7 +165,13 @@ bge-reranker 模型缓存（环境遗留，降级闸已验证）。详见 [batch
 - 批次 1 的 GUI 验收（编辑 + 归档演练 + check_kb 0/0）待用户在 tauri:dev 执行。
 - 批次 4 的 GUI 人审步骤（提案面板看 diff → 批准/驳回）待用户在 tauri:dev 执行
   （[batch-4.md](batch-4.md) §GUI 人审步骤）。
-- 三仓 push 后观察 dev-kb CI 首跑（`kb-spec-consistency` job 依赖 rm `main` 的 synapse）。
+- dev-kb CI 首跑已观察（2026-11-17）：`kb-spec 双实现一致性` job 修复后 **绿**
+  （两处修复：job 的 cargo build 加 `--no-default-features`，dev-kb `762477a`；
+  rm 侧 tauri-plugin-dialog/store 改 optional——此前 tauri-free 构建隐性依赖
+  glib，rm `5605e96`）。`单元与集成测试` job 为 dev-kb 既有失败（4 个 hybrid
+  检索用例 ubuntu 挂 / 本地 venv 绿，平台相关，与合并无关）——处置待定。
+  另：dev-kb 仓库级 git 代理配置（127.0.0.1:7897）指向的代理未运行，push 需
+  `-c http.proxy=` 绕过或清理该配置。
 - 跨进程写锁未收口：GUI 与 MCP 并发改同一文件的读-改-写靠后写覆盖，
   完整解（全部写方接同一把文件锁）待需要时单独一批（batch-3.md §已知边界）。
 - 提案 apply 前的目标漂移检测（目标条目在审阅期间被改时提示）——
